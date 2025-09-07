@@ -1,0 +1,432 @@
+//
+//  StatusBarManager.m
+//  LidAngleSensor
+//
+//  Created by Modified for background operation.
+//
+
+#import "StatusBarManager.h"
+#import "LidAngleSensor.h"
+#import "SoundManager.h"
+
+@implementation StatusBarManager
+
+- (instancetype)init {
+    NSLog(@"[StatusBarManager] Initializing StatusBarManager");
+    self = [super init];
+    if (self) {
+        NSLog(@"[StatusBarManager] Setting up status bar");
+        [self setupStatusBar];
+        
+        NSLog(@"[StatusBarManager] Setting up menu");
+        [self setupMenu];
+        
+        NSLog(@"[StatusBarManager] Initializing sensors and audio");
+        [self initializeSensorsAndAudio];
+        
+        NSLog(@"[StatusBarManager] Loading user preferences");
+        [self loadUserPreferences];
+        
+        NSLog(@"[StatusBarManager] Starting updates");
+        [self startUpdating];
+        
+        NSLog(@"[StatusBarManager] Initialization completed successfully");
+    } else {
+        NSLog(@"[StatusBarManager] ERROR: Failed to initialize super");
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [self stopUpdating];
+    [self.soundManager stopAllAudio];
+    [self.lidSensor stopLidAngleUpdates];
+}
+
+- (void)setupStatusBar {
+    // Create status bar item with fixed length to avoid size issues
+    @try {
+        self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+        
+        if (self.statusItem) {
+            NSLog(@"[StatusBarManager] Status item created, setting up button");
+            
+            [self setupStatusBarIcon];
+            
+            [self.statusItem.button setToolTip:@"Lid Angle Sensor - Click to open menu"];
+            
+            // Make sure the status item is visible
+            [self.statusItem setVisible:YES];
+            
+            NSLog(@"[StatusBarManager] Status bar item setup completed successfully");
+        } else {
+            NSLog(@"[StatusBarManager] ERROR: Failed to create status bar item");
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[StatusBarManager] ERROR creating status bar item: %@", exception.reason);
+    }
+}
+
+- (void)setupStatusBarIcon {
+    // Use ruler/angle icon as selected by user
+    [self.statusItem.button setTitle:@"📐"];
+    NSLog(@"[StatusBarManager] Using ruler emoji icon");
+}
+
+- (void)setupMenu {
+    self.statusMenu = [[NSMenu alloc] init];
+    self.soundModeMenuItems = [[NSMutableArray alloc] init];
+    
+    // Angle display item (non-clickable)
+    self.angleMenuItem = [[NSMenuItem alloc] initWithTitle:@"Angle: Initializing..." action:nil keyEquivalent:@""];
+    [self.angleMenuItem setEnabled:NO];
+    [self.statusMenu addItem:self.angleMenuItem];
+    
+    // Status display item (non-clickable)
+    self.statusMenuItem = [[NSMenuItem alloc] initWithTitle:@"Status: Detecting sensor..." action:nil keyEquivalent:@""];
+    [self.statusMenuItem setEnabled:NO];
+    [self.statusMenu addItem:self.statusMenuItem];
+    
+    // Separator
+    [self.statusMenu addItem:[NSMenuItem separatorItem]];
+    
+    // Audio toggle
+    self.audioToggleMenuItem = [[NSMenuItem alloc] initWithTitle:@"Enable Audio" action:@selector(toggleAudio:) keyEquivalent:@""];
+    [self.audioToggleMenuItem setTarget:self];
+    [self.statusMenu addItem:self.audioToggleMenuItem];
+    
+    // Volume control
+    [self createVolumeSlider];
+    
+    // Separator
+    [self.statusMenu addItem:[NSMenuItem separatorItem]];
+    
+    // Audio mode selection header
+    NSMenuItem *modeHeader = [[NSMenuItem alloc] initWithTitle:@"Sound Mode:" action:nil keyEquivalent:@""];
+    [modeHeader setEnabled:NO];
+    [self.statusMenu addItem:modeHeader];
+    
+    // Create menu items for each sound type
+    [self createSoundModeMenuItems];
+    
+    // Separator
+    [self.statusMenu addItem:[NSMenuItem separatorItem]];
+    
+    // About
+    NSMenuItem *aboutItem = [[NSMenuItem alloc] initWithTitle:@"About" action:@selector(showAbout:) keyEquivalent:@""];
+    [aboutItem setTarget:self];
+    [self.statusMenu addItem:aboutItem];
+    
+    // Quit
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit" action:@selector(quitApplication:) keyEquivalent:@"q"];
+    [quitItem setTarget:self];
+    [self.statusMenu addItem:quitItem];
+    
+    // Set the menu - this should work properly now
+    self.statusItem.menu = self.statusMenu;
+}
+
+- (void)createVolumeSlider {
+    // Create volume slider
+    self.volumeSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(0, 0, 150, 20)];
+    [self.volumeSlider setMinValue:0.0];
+    [self.volumeSlider setMaxValue:1.0];
+    [self.volumeSlider setDoubleValue:0.7]; // Default volume 70%
+    [self.volumeSlider setTarget:self];
+    [self.volumeSlider setAction:@selector(volumeChanged:)];
+    [self.volumeSlider setSliderType:NSSliderTypeLinear];
+    
+    // Create a custom view to hold the slider with padding
+    NSView *volumeView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 170, 30)];
+    
+    // Add volume icon (🔊) label
+    NSTextField *volumeIcon = [[NSTextField alloc] initWithFrame:NSMakeRect(5, 5, 15, 20)];
+    [volumeIcon setStringValue:@"🔊"];
+    [volumeIcon setBezeled:NO];
+    [volumeIcon setDrawsBackground:NO];
+    [volumeIcon setEditable:NO];
+    [volumeIcon setSelectable:NO];
+    [volumeView addSubview:volumeIcon];
+    
+    // Position slider next to icon
+    [self.volumeSlider setFrame:NSMakeRect(25, 5, 140, 20)];
+    [volumeView addSubview:self.volumeSlider];
+    
+    // Create menu item with custom view
+    self.volumeMenuItem = [[NSMenuItem alloc] init];
+    [self.volumeMenuItem setView:volumeView];
+    [self.statusMenu addItem:self.volumeMenuItem];
+}
+
+- (void)createSoundModeMenuItems {
+    // We'll create this after soundManager is initialized
+    // This method will be called from loadUserPreferences
+}
+
+- (void)initializeSensorsAndAudio {
+    // Initialize lid sensor
+    self.lidSensor = [[LidAngleSensor alloc] init];
+    
+    // Initialize sound manager
+    self.soundManager = [[SoundManager alloc] init];
+    
+    // Now create the sound mode menu items
+    [self createSoundModeMenuItemsWithSoundManager];
+}
+
+- (void)createSoundModeMenuItemsWithSoundManager {
+    // Clear existing items
+    [self.soundModeMenuItems removeAllObjects];
+    
+    // Get available sound types from sound manager
+    NSArray<NSNumber *> *soundTypes = [self.soundManager availableSoundTypes];
+    
+    for (NSNumber *soundTypeNumber in soundTypes) {
+        SoundType soundType = (SoundType)[soundTypeNumber integerValue];
+        NSString *soundName = [self.soundManager nameForSoundType:soundType];
+        
+        NSMenuItem *menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
+                                                          action:@selector(selectSoundMode:)
+                                                   keyEquivalent:@""];
+        [menuItem setTarget:self];
+        [menuItem setTag:soundType]; // Store sound type in tag
+        
+        // Set default selection (Off)
+        if (soundType == SoundTypeOff) {
+            [menuItem setState:NSControlStateValueOn];
+        }
+        
+        [self.soundModeMenuItems addObject:menuItem];
+        [self.statusMenu addItem:menuItem];
+    }
+}
+
+- (void)startUpdating {
+    // Update every 16ms (60Hz) for smooth real-time updates
+    self.updateTimer = [NSTimer scheduledTimerWithTimeInterval:0.016
+                                                        target:self
+                                                      selector:@selector(updateDisplay)
+                                                      userInfo:nil
+                                                       repeats:YES];
+}
+
+- (void)stopUpdating {
+    [self.updateTimer invalidate];
+    self.updateTimer = nil;
+}
+
+- (void)updateDisplay {
+    if (!self.lidSensor.isAvailable) {
+        [self.angleMenuItem setTitle:@"Angle: Not Available"];
+        [self.statusMenuItem setTitle:@"Status: Sensor not found"];
+        return;
+    }
+    
+    double angle = [self.lidSensor lidAngle];
+    
+    if (angle == -2.0) {
+        [self.angleMenuItem setTitle:@"Angle: Read Error"];
+        [self.statusMenuItem setTitle:@"Status: Failed to read sensor"];
+    } else {
+        [self.angleMenuItem setTitle:[NSString stringWithFormat:@"Angle: %.1f°", angle]];
+        
+        // Update status based on angle
+        NSString *status;
+        if (angle < 5.0) {
+            status = @"Status: Lid is closed";
+        } else if (angle < 45.0) {
+            status = @"Status: Lid slightly open";
+        } else if (angle < 90.0) {
+            status = @"Status: Lid partially open";
+        } else if (angle < 120.0) {
+            status = @"Status: Lid mostly open";
+        } else {
+            status = @"Status: Lid fully open";
+        }
+        [self.statusMenuItem setTitle:status];
+        
+        // Update sound manager with new angle
+        [self.soundManager updateWithLidAngle:angle];
+    }
+}
+
+- (void)updateMenuStates {
+    if (!self.soundManager) {
+        NSLog(@"[StatusBarManager] WARNING: soundManager is nil in updateMenuStates");
+        return;
+    }
+    
+    // Update sound mode checkmarks
+    SoundType currentSoundType = self.soundManager.currentSoundType;
+    
+    if (self.soundModeMenuItems) {
+        for (NSMenuItem *menuItem in self.soundModeMenuItems) {
+            if (menuItem) {
+                SoundType itemSoundType = (SoundType)menuItem.tag;
+                [menuItem setState:(itemSoundType == currentSoundType) ? NSControlStateValueOn : NSControlStateValueOff];
+            }
+        }
+    }
+    
+    // Update audio toggle button
+    if (self.audioToggleMenuItem) {
+        if (self.soundManager.isAudioEnabled) {
+            [self.audioToggleMenuItem setTitle:@"Disable Audio"];
+        } else {
+            [self.audioToggleMenuItem setTitle:@"Enable Audio"];
+        }
+        
+        // Enable/disable audio toggle based on mode
+        [self.audioToggleMenuItem setEnabled:(currentSoundType != SoundTypeOff)];
+    }
+}
+
+- (void)saveUserPreferences {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:self.soundManager.currentSoundType forKey:@"SoundType"];
+    [defaults setBool:self.soundManager.isAudioEnabled forKey:@"AudioEnabled"];
+    [defaults setFloat:self.soundManager.masterVolume forKey:@"MasterVolume"];
+    [defaults synchronize];
+}
+
+- (void)loadUserPreferences {
+    NSLog(@"[StatusBarManager] Starting loadUserPreferences");
+    
+    @try {
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        NSLog(@"[StatusBarManager] Got NSUserDefaults instance");
+        
+        // Load sound type (default to Off)
+        NSInteger savedSoundType = [defaults integerForKey:@"SoundType"];
+        NSLog(@"[StatusBarManager] Loaded sound type: %ld", (long)savedSoundType);
+        
+        // Validate sound type and default to Off if invalid
+        if (savedSoundType < SoundTypeOff || savedSoundType > SoundTypeGachi) {
+            NSLog(@"[StatusBarManager] Invalid sound type %ld, defaulting to SoundTypeOff", (long)savedSoundType);
+            savedSoundType = SoundTypeOff;
+        }
+        
+        if (self.soundManager) {
+            NSLog(@"[StatusBarManager] Setting sound type to: %ld", (long)savedSoundType);
+            [self.soundManager setSoundType:(SoundType)savedSoundType];
+            NSLog(@"[StatusBarManager] Sound type set successfully");
+        }
+        
+        // Load audio enabled state
+        BOOL audioEnabled = [defaults boolForKey:@"AudioEnabled"];
+        NSLog(@"[StatusBarManager] Loaded audio enabled: %d", audioEnabled);
+        
+        if (self.soundManager) {
+            NSLog(@"[StatusBarManager] Enabling audio: %d", audioEnabled);
+            [self.soundManager enableAudio:audioEnabled];
+            NSLog(@"[StatusBarManager] Audio enabled successfully");
+        }
+        
+        // Load volume (default to 0.7 if not set)
+        float savedVolume = [defaults floatForKey:@"MasterVolume"];
+        if (savedVolume == 0.0) {
+            savedVolume = 0.7; // Default volume
+        }
+        NSLog(@"[StatusBarManager] Using volume: %.2f", savedVolume);
+        
+        if (self.soundManager) {
+            NSLog(@"[StatusBarManager] Setting master volume");
+            [self.soundManager setMasterVolume:savedVolume];
+            NSLog(@"[StatusBarManager] Master volume set successfully");
+        }
+        
+        if (self.volumeSlider) {
+            NSLog(@"[StatusBarManager] Setting volume slider value");
+            [self.volumeSlider setDoubleValue:savedVolume];
+            NSLog(@"[StatusBarManager] Volume slider set successfully");
+        }
+        
+        NSLog(@"[StatusBarManager] About to call updateMenuStates");
+        [self updateMenuStates];
+        NSLog(@"[StatusBarManager] updateMenuStates completed successfully");
+        
+    } @catch (NSException *exception) {
+        NSLog(@"[StatusBarManager] EXCEPTION in loadUserPreferences: %@", exception.reason);
+        NSLog(@"[StatusBarManager] Exception stack trace: %@", [exception callStackSymbols]);
+    }
+    
+    NSLog(@"[StatusBarManager] loadUserPreferences completed");
+}
+
+#pragma mark - Menu Actions
+
+- (void)statusBarClicked:(id)sender {
+    // Manually show the menu at the status bar button location
+    NSRect buttonRect = self.statusItem.button.frame;
+    NSPoint menuOrigin = NSMakePoint(NSMinX(buttonRect), NSMaxY(buttonRect));
+    
+    // Convert to screen coordinates
+    menuOrigin = [self.statusItem.button.window convertPointToScreen:menuOrigin];
+    
+    // Show the menu
+    [self.statusMenu popUpMenuPositioningItem:nil atLocation:menuOrigin inView:nil];
+}
+
+- (void)toggleAudio:(id)sender {
+    BOOL newState = !self.soundManager.isAudioEnabled;
+    [self.soundManager enableAudio:newState];
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectSoundMode:(id)sender {
+    NSMenuItem *menuItem = (NSMenuItem *)sender;
+    SoundType soundType = (SoundType)menuItem.tag;
+    
+    [self.soundManager setSoundType:soundType];
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectCreakMode:(id)sender {
+    [self.soundManager setSoundType:SoundTypeCreak];
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectThereminMode:(id)sender {
+    [self.soundManager setSoundType:SoundTypeTheremin];
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectOffMode:(id)sender {
+    [self.soundManager setSoundType:SoundTypeOff];
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)volumeChanged:(id)sender {
+    NSSlider *slider = (NSSlider *)sender;
+    float newVolume = [slider floatValue];
+    
+    NSLog(@"[StatusBarManager] Volume changed to: %.2f", newVolume);
+    
+    // Update sound manager volume
+    [self.soundManager setMasterVolume:newVolume];
+    
+    // Save preferences
+    [self saveUserPreferences];
+}
+
+- (void)showAbout:(id)sender {
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:@"Lid Angle Sensor"];
+    [alert setInformativeText:@"A utility that shows the angle from your MacBook's lid sensor and can play various audio effects.\n\nModified for background operation with system tray support and multiple sound options."];
+    [alert addButtonWithTitle:@"OK"];
+    [alert runModal];
+}
+
+- (void)quitApplication:(id)sender {
+    [self stopUpdating];
+    [self.soundManager stopAllAudio];
+    [self.lidSensor stopLidAngleUpdates];
+    [[NSApplication sharedApplication] terminate:nil];
+}
+
+@end

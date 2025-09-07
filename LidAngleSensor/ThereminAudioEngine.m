@@ -9,8 +9,8 @@
 #import <AudioToolbox/AudioToolbox.h>
 
 // Theremin parameter mapping constants
-static const double kMinFrequency = 110.0;       // Hz - A2 note (closed lid)
-static const double kMaxFrequency = 440.0;       // Hz - A4 note (open lid) - much lower range
+static const double kMinFrequency = 55.0;        // Hz - A1 note (closed lid) - lower start
+static const double kMaxFrequency = 880.0;       // Hz - A5 note (open lid) - much higher range
 static const double kMinAngle = 0.0;             // degrees - closed lid
 static const double kMaxAngle = 135.0;           // degrees - fully open lid
 
@@ -64,6 +64,9 @@ static const UInt32 kBufferSize = 512;
 // Vibrato generation
 @property (nonatomic, assign) double vibratoPhase;
 
+// Master volume control
+@property (nonatomic, assign) float masterVolume;
+
 @end
 
 @implementation ThereminAudioEngine
@@ -84,6 +87,7 @@ static const UInt32 kBufferSize = 512;
         _phase = 0.0;
         _vibratoPhase = 0.0;
         _phaseIncrement = 2.0 * M_PI * kMinFrequency / kSampleRate;
+        _masterVolume = 1.0; // Default master volume
         
         if (![self setupAudioEngine]) {
             NSLog(@"[ThereminAudioEngine] Failed to setup audio engine");
@@ -110,9 +114,9 @@ static const UInt32 kBufferSize = 512;
                                                             interleaved:NO];
     
     // Create source node for sine wave generation
-    __weak typeof(self) weakSelf = self;
+    ThereminAudioEngine *engine = self;
     self.sourceNode = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL * _Nonnull isSilence, const AudioTimeStamp * _Nonnull timestamp, AVAudioFrameCount frameCount, AudioBufferList * _Nonnull outputData) {
-        return [weakSelf renderSineWave:isSilence timestamp:timestamp frameCount:frameCount outputData:outputData];
+        return [engine renderSineWave:isSilence timestamp:timestamp frameCount:frameCount outputData:outputData];
     }];
     
     // Attach and connect the source node
@@ -175,8 +179,8 @@ static const UInt32 kBufferSize = 512;
         // Update phase increment for modulated frequency
         self.phaseIncrement = 2.0 * M_PI * modulatedFrequency / kSampleRate;
         
-        // Generate sample with vibrato and current volume
-        output[i] = (float)(sin(self.phase) * self.currentVolume * 0.25); // 0.25 to prevent clipping
+        // Generate sample with vibrato, current volume, and master volume
+        output[i] = (float)(sin(self.phase) * self.currentVolume * self.masterVolume * 0.25); // 0.25 to prevent clipping
         
         // Update phases
         self.phase += self.phaseIncrement;
@@ -307,6 +311,30 @@ static const UInt32 kBufferSize = 512;
     // Ramp current values toward targets for smooth transitions
     self.currentFrequency = [self rampValue:self.currentFrequency toward:self.targetFrequency withDeltaTime:deltaTime timeConstantMs:kFrequencyRampTimeMs];
     self.currentVolume = [self rampValue:self.currentVolume toward:self.targetVolume withDeltaTime:deltaTime timeConstantMs:kVolumeRampTimeMs];
+}
+
+#pragma mark - Volume Control
+
+- (void)setMasterVolume:(float)volume {
+    @try {
+        if (self == nil) {
+            NSLog(@"[ThereminAudioEngine] ERROR: setMasterVolume called on nil object");
+            return;
+        }
+        
+        self.masterVolume = fmax(0.0, fmin(1.0, volume)); // Clamp between 0.0 and 1.0
+        NSLog(@"[ThereminAudioEngine] Master volume set to: %.2f", self.masterVolume);
+        
+    } @catch (NSException *exception) {
+        NSLog(@"[ThereminAudioEngine] EXCEPTION in setMasterVolume: %@", exception.reason);
+        NSLog(@"[ThereminAudioEngine] Exception stack trace: %@", [exception callStackSymbols]);
+        // Set a safe default value
+        _masterVolume = 0.7;
+    }
+}
+
+- (float)getMasterVolume {
+    return self.masterVolume;
 }
 
 #pragma mark - Property Accessors

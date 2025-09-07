@@ -7,9 +7,10 @@
 
 #import <Cocoa/Cocoa.h>
 
+@class StatusBarManager;
+
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
-@property (strong, nonatomic) NSWindow *window;
+@property (strong, nonatomic) StatusBarManager *statusBarManager;
 
 @end
-
