@@ -59,4 +59,16 @@
  */
 - (void)setAngularVelocity:(double)velocity;
 
+/**
+ * Set the master volume for the theremin engine.
+ * @param volume Volume level from 0.0 (silent) to 1.0 (full volume)
+ */
+- (void)setMasterVolume:(float)volume;
+
+/**
+ * Get the current master volume setting.
+ * @return Current master volume level (0.0 to 1.0)
+ */
+- (float)getMasterVolume;
+
 @end
