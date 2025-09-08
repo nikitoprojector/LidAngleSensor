@@ -1,15 +1,15 @@
 //
-//  CreakAudioEngine.m
+//  BaseAudioEngine.m
 //  LidAngleSensor
 //
-//  Created by Sam on 2025-09-06.
+//  Base class for all audio engines to eliminate code duplication
 //
 
-#import "CreakAudioEngine.h"
+#import "BaseAudioEngine.h"
 
-// Audio parameter mapping constants
+// Common audio parameter mapping constants
 static const double kDeadzone = 1.0;          // deg/s - below this: treat as still
-static const double kVelocityFull = 10.0;     // deg/s - max creak volume at/under this velocity
+static const double kVelocityFull = 10.0;     // deg/s - max volume at/under this velocity
 static const double kVelocityQuiet = 100.0;   // deg/s - silent by/over this velocity (fast movement)
 
 // Pitch variation constants  
@@ -26,24 +26,13 @@ static const double kMovementTimeoutMs = 50.0;        // Time before aggressive 
 static const double kVelocityDecayFactor = 0.5;       // Decay rate when no movement detected
 static const double kAdditionalDecayFactor = 0.8;     // Additional decay after timeout
 
-@interface CreakAudioEngine ()
+@interface BaseAudioEngine ()
 
-// Audio engine components
-@property (nonatomic, strong) AVAudioEngine *audioEngine;
-@property (nonatomic, strong) AVAudioPlayerNode *creakPlayerNode;
-@property (nonatomic, strong) AVAudioUnitVarispeed *varispeadUnit;
-@property (nonatomic, strong) AVAudioMixerNode *mixerNode;
-
-// Audio files
-@property (nonatomic, strong) AVAudioFile *creakLoopFile;
-
-// State tracking
+// State tracking for velocity calculation
 @property (nonatomic, assign) double lastLidAngle;
 @property (nonatomic, assign) double smoothedLidAngle;
 @property (nonatomic, assign) double lastUpdateTime;
 @property (nonatomic, assign) double smoothedVelocity;
-@property (nonatomic, assign) double targetGain;
-@property (nonatomic, assign) double targetRate;
 @property (nonatomic, assign) double currentGain;
 @property (nonatomic, assign) double currentRate;
 @property (nonatomic, assign) BOOL isFirstUpdate;
@@ -51,7 +40,7 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 
 @end
 
-@implementation CreakAudioEngine
+@implementation BaseAudioEngine
 
 - (instancetype)init {
     self = [super init];
@@ -68,12 +57,12 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
         _currentRate = 1.0;
         
         if (![self setupAudioEngine]) {
-            NSLog(@"[CreakAudioEngine] Failed to setup audio engine");
+            NSLog(@"[%@] Failed to setup audio engine", NSStringFromClass([self class]));
             return nil;
         }
         
         if (![self loadAudioFiles]) {
-            NSLog(@"[CreakAudioEngine] Failed to load audio files");
+            NSLog(@"[%@] Failed to load audio files", NSStringFromClass([self class]));
             return nil;
         }
     }
@@ -82,51 +71,6 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 
 - (void)dealloc {
     [self stopEngine];
-}
-
-#pragma mark - Audio Engine Setup
-
-- (BOOL)setupAudioEngine {
-    self.audioEngine = [[AVAudioEngine alloc] init];
-    
-    // Create audio nodes
-    self.creakPlayerNode = [[AVAudioPlayerNode alloc] init];
-    self.varispeadUnit = [[AVAudioUnitVarispeed alloc] init];
-    self.mixerNode = self.audioEngine.mainMixerNode;
-    
-    // Attach nodes to engine
-    [self.audioEngine attachNode:self.creakPlayerNode];
-    [self.audioEngine attachNode:self.varispeadUnit];
-    
-    // Audio connections will be made after loading the file to use its native format
-    return YES;
-}
-
-- (BOOL)loadAudioFiles {
-    NSBundle *bundle = [NSBundle mainBundle];
-    
-    // Load creak loop file
-    NSString *creakPath = [bundle pathForResource:@"CREAK_LOOP" ofType:@"wav"];
-    if (!creakPath) {
-        NSLog(@"[CreakAudioEngine] Could not find CREAK_LOOP.wav");
-        return NO;
-    }
-    
-    NSError *error;
-    NSURL *creakURL = [NSURL fileURLWithPath:creakPath];
-    self.creakLoopFile = [[AVAudioFile alloc] initForReading:creakURL error:&error];
-    if (!self.creakLoopFile) {
-        NSLog(@"[CreakAudioEngine] Failed to load CREAK_LOOP.wav: %@", error.localizedDescription);
-        return NO;
-    }
-    
-    // Connect the audio graph using the file's native format
-    AVAudioFormat *fileFormat = self.creakLoopFile.processingFormat;
-    
-    // Connect audio graph: CreakPlayer -> Varispeed -> Mixer
-    [self.audioEngine connect:self.creakPlayerNode to:self.varispeadUnit format:fileFormat];
-    [self.audioEngine connect:self.varispeadUnit to:self.mixerNode format:fileFormat];
-    return YES;
 }
 
 #pragma mark - Engine Control
@@ -138,12 +82,13 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     
     NSError *error;
     if (![self.audioEngine startAndReturnError:&error]) {
-        NSLog(@"[CreakAudioEngine] Failed to start audio engine: %@", error.localizedDescription);
+        NSLog(@"[%@] Failed to start audio engine: %@", NSStringFromClass([self class]), error.localizedDescription);
         return;
     }
     
-    // Start looping the creak sound
-    [self startCreakLoop];
+    [self startAudioPlayback];
+    
+    NSLog(@"[%@] Started audio engine", NSStringFromClass([self class]));
 }
 
 - (void)stopEngine {
@@ -151,40 +96,13 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
         return;
     }
     
-    [self.creakPlayerNode stop];
     [self.audioEngine stop];
+    
+    NSLog(@"[%@] Stopped audio engine", NSStringFromClass([self class]));
 }
 
 - (BOOL)isEngineRunning {
     return self.audioEngine.isRunning;
-}
-
-#pragma mark - Creak Loop Management
-
-- (void)startCreakLoop {
-    if (!self.creakPlayerNode || !self.creakLoopFile) {
-        return;
-    }
-    
-    // Reset file position to beginning
-    self.creakLoopFile.framePosition = 0;
-    
-    // Schedule the creak loop to play continuously
-    AVAudioFrameCount frameCount = (AVAudioFrameCount)self.creakLoopFile.length;
-    AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:self.creakLoopFile.processingFormat
-                                                             frameCapacity:frameCount];
-    
-    NSError *error;
-    if (![self.creakLoopFile readIntoBuffer:buffer error:&error]) {
-        NSLog(@"[CreakAudioEngine] Failed to read creak loop into buffer: %@", error.localizedDescription);
-        return;
-    }
-    
-    [self.creakPlayerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
-    [self.creakPlayerNode play];
-    
-    // Set initial volume to 0 (will be controlled by gain)
-    self.creakPlayerNode.volume = 0.0;
 }
 
 #pragma mark - Velocity Calculation and Parameter Mapping
@@ -254,10 +172,52 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     [self updateAudioParametersWithVelocity:velocity];
 }
 
+#pragma mark - Helper Methods
+
+- (double)rampValue:(double)current toward:(double)target withDeltaTime:(double)dt timeConstantMs:(double)tauMs {
+    double alpha = fmin(1.0, dt / (tauMs / 1000.0)); // linear ramp coefficient
+    return current + (target - current) * alpha;
+}
+
+- (void)rampToTargetParameters {
+    if (!self.isEngineRunning) {
+        return;
+    }
+    
+    // Calculate delta time for ramping
+    static double lastRampTime = 0;
+    double currentTime = CACurrentMediaTime();
+    if (lastRampTime == 0) lastRampTime = currentTime;
+    double deltaTime = currentTime - lastRampTime;
+    lastRampTime = currentTime;
+    
+    // Ramp current values toward targets for smooth transitions
+    self.currentGain = [self rampValue:self.currentGain toward:self.targetGain withDeltaTime:deltaTime timeConstantMs:kGainRampTimeMs];
+    self.currentRate = [self rampValue:self.currentRate toward:self.targetRate withDeltaTime:deltaTime timeConstantMs:kRateRampTimeMs];
+}
+
+#pragma mark - Abstract Methods (to be overridden by subclasses)
+
+- (BOOL)setupAudioEngine {
+    // Default implementation - subclasses should override
+    self.audioEngine = [[AVAudioEngine alloc] init];
+    return YES;
+}
+
+- (BOOL)loadAudioFiles {
+    // Default implementation - subclasses should override
+    return YES;
+}
+
+- (void)startAudioPlayback {
+    // Default implementation - subclasses should override
+}
+
 - (void)updateAudioParametersWithVelocity:(double)velocity {
+    // Default implementation - subclasses should override
     double speed = velocity; // Velocity is already absolute
     
-    // Calculate target gain: slow movement = loud creak, fast movement = quiet/silent
+    // Calculate target gain: slow movement = loud, fast movement = quiet/silent
     double gain;
     if (speed < kDeadzone) {
         gain = 0.0; // Below deadzone: no sound
@@ -284,33 +244,6 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     [self rampToTargetParameters];
 }
 
-// Helper function for parameter ramping
-- (double)rampValue:(double)current toward:(double)target withDeltaTime:(double)dt timeConstantMs:(double)tauMs {
-    double alpha = fmin(1.0, dt / (tauMs / 1000.0)); // linear ramp coefficient
-    return current + (target - current) * alpha;
-}
-
-- (void)rampToTargetParameters {
-    if (!self.isEngineRunning) {
-        return;
-    }
-    
-    // Calculate delta time for ramping
-    static double lastRampTime = 0;
-    double currentTime = CACurrentMediaTime();
-    if (lastRampTime == 0) lastRampTime = currentTime;
-    double deltaTime = currentTime - lastRampTime;
-    lastRampTime = currentTime;
-    
-    // Ramp current values toward targets for smooth transitions
-    self.currentGain = [self rampValue:self.currentGain toward:self.targetGain withDeltaTime:deltaTime timeConstantMs:kGainRampTimeMs];
-    self.currentRate = [self rampValue:self.currentRate toward:self.targetRate withDeltaTime:deltaTime timeConstantMs:kRateRampTimeMs];
-    
-    // Apply ramped values to audio nodes (2x multiplier for audible volume)
-    self.creakPlayerNode.volume = (float)(self.currentGain * 2.0);
-    self.varispeadUnit.rate = (float)self.currentRate;
-}
-
 #pragma mark - Property Accessors
 
 - (double)currentVelocity {
@@ -326,4 +259,3 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 }
 
 @end
-

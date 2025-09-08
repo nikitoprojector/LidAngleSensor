@@ -95,9 +95,6 @@
     [self.audioToggleMenuItem setTarget:self];
     [self.statusMenu addItem:self.audioToggleMenuItem];
     
-    // Volume control
-    [self createVolumeSlider];
-    
     // Separator
     [self.statusMenu addItem:[NSMenuItem separatorItem]];
     
@@ -126,37 +123,6 @@
     self.statusItem.menu = self.statusMenu;
 }
 
-- (void)createVolumeSlider {
-    // Create volume slider
-    self.volumeSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(0, 0, 150, 20)];
-    [self.volumeSlider setMinValue:0.0];
-    [self.volumeSlider setMaxValue:1.0];
-    [self.volumeSlider setDoubleValue:0.7]; // Default volume 70%
-    [self.volumeSlider setTarget:self];
-    [self.volumeSlider setAction:@selector(volumeChanged:)];
-    [self.volumeSlider setSliderType:NSSliderTypeLinear];
-    
-    // Create a custom view to hold the slider with padding
-    NSView *volumeView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 170, 30)];
-    
-    // Add volume icon (🔊) label
-    NSTextField *volumeIcon = [[NSTextField alloc] initWithFrame:NSMakeRect(5, 5, 15, 20)];
-    [volumeIcon setStringValue:@"🔊"];
-    [volumeIcon setBezeled:NO];
-    [volumeIcon setDrawsBackground:NO];
-    [volumeIcon setEditable:NO];
-    [volumeIcon setSelectable:NO];
-    [volumeView addSubview:volumeIcon];
-    
-    // Position slider next to icon
-    [self.volumeSlider setFrame:NSMakeRect(25, 5, 140, 20)];
-    [volumeView addSubview:self.volumeSlider];
-    
-    // Create menu item with custom view
-    self.volumeMenuItem = [[NSMenuItem alloc] init];
-    [self.volumeMenuItem setView:volumeView];
-    [self.statusMenu addItem:self.volumeMenuItem];
-}
 
 - (void)createSoundModeMenuItems {
     // We'll create this after soundManager is initialized
@@ -335,11 +301,6 @@
             NSLog(@"[StatusBarManager] Master volume set successfully");
         }
         
-        if (self.volumeSlider) {
-            NSLog(@"[StatusBarManager] Setting volume slider value");
-            [self.volumeSlider setDoubleValue:savedVolume];
-            NSLog(@"[StatusBarManager] Volume slider set successfully");
-        }
         
         NSLog(@"[StatusBarManager] About to call updateMenuStates");
         [self updateMenuStates];
@@ -401,18 +362,6 @@
     [self saveUserPreferences];
 }
 
-- (void)volumeChanged:(id)sender {
-    NSSlider *slider = (NSSlider *)sender;
-    float newVolume = [slider floatValue];
-    
-    NSLog(@"[StatusBarManager] Volume changed to: %.2f", newVolume);
-    
-    // Update sound manager volume
-    [self.soundManager setMasterVolume:newVolume];
-    
-    // Save preferences
-    [self saveUserPreferences];
-}
 
 - (void)showAbout:(id)sender {
     NSAlert *alert = [[NSAlert alloc] init];

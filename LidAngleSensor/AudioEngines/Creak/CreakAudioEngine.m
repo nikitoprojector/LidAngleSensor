@@ -1,15 +1,15 @@
 //
-//  GachiAudioEngine.m
+//  CreakAudioEngine.m
 //  LidAngleSensor
 //
-//  Created for gachi sound mode with MP3 support and audio stretching.
+//  Created by Sam on 2025-09-06.
 //
 
-#import "GachiAudioEngine.h"
+#import "CreakAudioEngine.h"
 
-// Audio parameter mapping constants (similar to CreakAudioEngine)
+// Audio parameter mapping constants
 static const double kDeadzone = 1.0;          // deg/s - below this: treat as still
-static const double kVelocityFull = 10.0;     // deg/s - max volume at/under this velocity
+static const double kVelocityFull = 10.0;     // deg/s - max creak volume at/under this velocity
 static const double kVelocityQuiet = 100.0;   // deg/s - silent by/over this velocity (fast movement)
 
 // Pitch variation constants  
@@ -26,23 +26,18 @@ static const double kMovementTimeoutMs = 50.0;        // Time before aggressive 
 static const double kVelocityDecayFactor = 0.5;       // Decay rate when no movement detected
 static const double kAdditionalDecayFactor = 0.8;     // Additional decay after timeout
 
-// Gachi sound files
-static NSArray<NSString *> *kGachiSoundFiles;
-
-@interface GachiAudioEngine ()
+@interface CreakAudioEngine ()
 
 // Audio engine components
 @property (nonatomic, strong) AVAudioEngine *audioEngine;
-@property (nonatomic, strong) AVAudioPlayerNode *playerNode;
+@property (nonatomic, strong) AVAudioPlayerNode *creakPlayerNode;
 @property (nonatomic, strong) AVAudioUnitVarispeed *varispeadUnit;
 @property (nonatomic, strong) AVAudioMixerNode *mixerNode;
 
 // Audio files
-@property (nonatomic, strong) NSArray<AVAudioFile *> *gachiFiles;
-@property (nonatomic, strong) AVAudioFile *currentFile;
-@property (nonatomic, assign) NSInteger currentSoundIndex;
+@property (nonatomic, strong) AVAudioFile *creakLoopFile;
 
-// State tracking for velocity calculation
+// State tracking
 @property (nonatomic, assign) double lastLidAngle;
 @property (nonatomic, assign) double smoothedLidAngle;
 @property (nonatomic, assign) double lastUpdateTime;
@@ -53,23 +48,10 @@ static NSArray<NSString *> *kGachiSoundFiles;
 @property (nonatomic, assign) double currentRate;
 @property (nonatomic, assign) BOOL isFirstUpdate;
 @property (nonatomic, assign) NSTimeInterval lastMovementTime;
-@property (nonatomic, assign) BOOL isPlaying;
-@property (nonatomic, assign) BOOL wasMoving; // Track if we were moving in previous update
 
 @end
 
-@implementation GachiAudioEngine
-
-+ (void)initialize {
-    if (self == [GachiAudioEngine class]) {
-        kGachiSoundFiles = @[
-            @"AUUUUUUUGH",
-            @"OOOOOOOOOOO", 
-            @"RIP_EARS",
-            @"VAN_DARKHOLME_WOO"
-        ];
-    }
-}
+@implementation CreakAudioEngine
 
 - (instancetype)init {
     self = [super init];
@@ -84,17 +66,14 @@ static NSArray<NSString *> *kGachiSoundFiles;
         _targetRate = 1.0;
         _currentGain = 0.0;
         _currentRate = 1.0;
-        _currentSoundIndex = -1;
-        _isPlaying = NO;
-        _wasMoving = NO;
         
         if (![self setupAudioEngine]) {
-            NSLog(@"[GachiAudioEngine] Failed to setup audio engine");
+            NSLog(@"[CreakAudioEngine] Failed to setup audio engine");
             return nil;
         }
         
         if (![self loadAudioFiles]) {
-            NSLog(@"[GachiAudioEngine] Failed to load audio files");
+            NSLog(@"[CreakAudioEngine] Failed to load audio files");
             return nil;
         }
     }
@@ -111,54 +90,42 @@ static NSArray<NSString *> *kGachiSoundFiles;
     self.audioEngine = [[AVAudioEngine alloc] init];
     
     // Create audio nodes
-    self.playerNode = [[AVAudioPlayerNode alloc] init];
+    self.creakPlayerNode = [[AVAudioPlayerNode alloc] init];
     self.varispeadUnit = [[AVAudioUnitVarispeed alloc] init];
     self.mixerNode = self.audioEngine.mainMixerNode;
     
     // Attach nodes to engine
-    [self.audioEngine attachNode:self.playerNode];
+    [self.audioEngine attachNode:self.creakPlayerNode];
     [self.audioEngine attachNode:self.varispeadUnit];
     
+    // Audio connections will be made after loading the file to use its native format
     return YES;
 }
 
 - (BOOL)loadAudioFiles {
     NSBundle *bundle = [NSBundle mainBundle];
-    NSMutableArray<AVAudioFile *> *files = [[NSMutableArray alloc] init];
     
-    for (NSString *fileName in kGachiSoundFiles) {
-        // Try MP3 first
-        NSString *filePath = [bundle pathForResource:fileName ofType:@"mp3"];
-        if (!filePath) {
-            // Fallback to WAV if MP3 not found
-            filePath = [bundle pathForResource:fileName ofType:@"wav"];
-        }
-        
-        if (!filePath) {
-            NSLog(@"[GachiAudioEngine] Could not find %@.mp3 or %@.wav", fileName, fileName);
-            continue;
-        }
-        
-        NSError *error;
-        NSURL *fileURL = [NSURL fileURLWithPath:filePath];
-        AVAudioFile *audioFile = [[AVAudioFile alloc] initForReading:fileURL error:&error];
-        
-        if (!audioFile) {
-            NSLog(@"[GachiAudioEngine] Failed to load %@: %@", fileName, error.localizedDescription);
-            continue;
-        }
-        
-        [files addObject:audioFile];
-        NSLog(@"[GachiAudioEngine] Successfully loaded %@", fileName);
-    }
-    
-    if (files.count == 0) {
-        NSLog(@"[GachiAudioEngine] No gachi sound files could be loaded");
+    // Load creak loop file
+    NSString *creakPath = [bundle pathForResource:@"CREAK_LOOP" ofType:@"wav"];
+    if (!creakPath) {
+        NSLog(@"[CreakAudioEngine] Could not find CREAK_LOOP.wav");
         return NO;
     }
     
-    self.gachiFiles = [files copy];
-    NSLog(@"[GachiAudioEngine] Loaded %lu gachi sound files", (unsigned long)self.gachiFiles.count);
+    NSError *error;
+    NSURL *creakURL = [NSURL fileURLWithPath:creakPath];
+    self.creakLoopFile = [[AVAudioFile alloc] initForReading:creakURL error:&error];
+    if (!self.creakLoopFile) {
+        NSLog(@"[CreakAudioEngine] Failed to load CREAK_LOOP.wav: %@", error.localizedDescription);
+        return NO;
+    }
+    
+    // Connect the audio graph using the file's native format
+    AVAudioFormat *fileFormat = self.creakLoopFile.processingFormat;
+    
+    // Connect audio graph: CreakPlayer -> Varispeed -> Mixer
+    [self.audioEngine connect:self.creakPlayerNode to:self.varispeadUnit format:fileFormat];
+    [self.audioEngine connect:self.varispeadUnit to:self.mixerNode format:fileFormat];
     return YES;
 }
 
@@ -171,15 +138,12 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     NSError *error;
     if (![self.audioEngine startAndReturnError:&error]) {
-        NSLog(@"[GachiAudioEngine] Failed to start audio engine: %@", error.localizedDescription);
+        NSLog(@"[CreakAudioEngine] Failed to start audio engine: %@", error.localizedDescription);
         return;
     }
     
-    // Select initial random sound and prepare for playback
-    [self selectNewRandomSound];
-    [self startGachiLoop];
-    
-    NSLog(@"[GachiAudioEngine] Started gachi engine with audio stretching");
+    // Start looping the creak sound
+    [self startCreakLoop];
 }
 
 - (void)stopEngine {
@@ -187,70 +151,40 @@ static NSArray<NSString *> *kGachiSoundFiles;
         return;
     }
     
-    [self.playerNode stop];
+    [self.creakPlayerNode stop];
     [self.audioEngine stop];
-    self.isPlaying = NO;
-    
-    NSLog(@"[GachiAudioEngine] Stopped gachi engine");
 }
 
 - (BOOL)isEngineRunning {
     return self.audioEngine.isRunning;
 }
 
-#pragma mark - Sound Selection and Playback
+#pragma mark - Creak Loop Management
 
-- (void)selectNewRandomSound {
-    if (self.gachiFiles.count == 0) {
+- (void)startCreakLoop {
+    if (!self.creakPlayerNode || !self.creakLoopFile) {
         return;
     }
-    
-    // Select a random sound (can be the same as previous)
-    NSInteger newIndex = arc4random_uniform((uint32_t)self.gachiFiles.count);
-    self.currentSoundIndex = newIndex;
-    self.currentFile = self.gachiFiles[newIndex];
-    
-    NSString *fileName = kGachiSoundFiles[newIndex];
-    NSLog(@"[GachiAudioEngine] Selected random sound: %@ (index %ld)", fileName, (long)newIndex);
-}
-
-- (void)startGachiLoop {
-    if (!self.currentFile || !self.isEngineRunning) {
-        return;
-    }
-    
-    // Stop any current playback
-    [self.playerNode stop];
-    
-    // Connect the audio graph using the file's native format
-    AVAudioFormat *fileFormat = self.currentFile.processingFormat;
-    
-    // Connect audio graph: Player -> Varispeed -> Mixer
-    [self.audioEngine connect:self.playerNode to:self.varispeadUnit format:fileFormat];
-    [self.audioEngine connect:self.varispeadUnit to:self.mixerNode format:fileFormat];
     
     // Reset file position to beginning
-    self.currentFile.framePosition = 0;
+    self.creakLoopFile.framePosition = 0;
     
-    // Schedule the gachi sound to play continuously
-    AVAudioFrameCount frameCount = (AVAudioFrameCount)self.currentFile.length;
-    AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:fileFormat
+    // Schedule the creak loop to play continuously
+    AVAudioFrameCount frameCount = (AVAudioFrameCount)self.creakLoopFile.length;
+    AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:self.creakLoopFile.processingFormat
                                                              frameCapacity:frameCount];
     
     NSError *error;
-    if (![self.currentFile readIntoBuffer:buffer error:&error]) {
-        NSLog(@"[GachiAudioEngine] Failed to read gachi sound into buffer: %@", error.localizedDescription);
+    if (![self.creakLoopFile readIntoBuffer:buffer error:&error]) {
+        NSLog(@"[CreakAudioEngine] Failed to read creak loop into buffer: %@", error.localizedDescription);
         return;
     }
     
-    [self.playerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
-    [self.playerNode play];
+    [self.creakPlayerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
+    [self.creakPlayerNode play];
     
     // Set initial volume to 0 (will be controlled by gain)
-    self.playerNode.volume = 0.0;
-    self.isPlaying = YES;
-    
-    NSLog(@"[GachiAudioEngine] Started playing gachi sound loop");
+    self.creakPlayerNode.volume = 0.0;
 }
 
 #pragma mark - Velocity Calculation and Parameter Mapping
@@ -292,19 +226,11 @@ static NSArray<NSString *> *kGachiSoundFiles;
     }
     
     // Stage 3: Apply velocity smoothing and decay
-    BOOL isMoving = instantVelocity > 0.0;
-    
-    if (isMoving) {
+    if (instantVelocity > 0.0) {
         // Real movement detected - apply moderate smoothing
         self.smoothedVelocity = (kVelocitySmoothingFactor * instantVelocity) + 
                                ((1.0 - kVelocitySmoothingFactor) * self.smoothedVelocity);
         self.lastMovementTime = currentTime;
-        
-        // If we just started moving after being still, select a new random sound
-        if (!self.wasMoving) {
-            [self selectNewRandomSound];
-            [self startGachiLoop];
-        }
     } else {
         // No movement detected - apply fast decay
         self.smoothedVelocity *= kVelocityDecayFactor;
@@ -318,7 +244,6 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     // Update state for next iteration
     self.lastUpdateTime = currentTime;
-    self.wasMoving = isMoving;
     
     // Apply velocity-based parameter mapping
     [self updateAudioParametersWithVelocity:self.smoothedVelocity];
@@ -332,7 +257,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
 - (void)updateAudioParametersWithVelocity:(double)velocity {
     double speed = velocity; // Velocity is already absolute
     
-    // Calculate target gain: slow movement = loud gachi, fast movement = quiet/silent
+    // Calculate target gain: slow movement = loud creak, fast movement = quiet/silent
     double gain;
     if (speed < kDeadzone) {
         gain = 0.0; // Below deadzone: no sound
@@ -382,7 +307,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
     self.currentRate = [self rampValue:self.currentRate toward:self.targetRate withDeltaTime:deltaTime timeConstantMs:kRateRampTimeMs];
     
     // Apply ramped values to audio nodes (2x multiplier for audible volume)
-    self.playerNode.volume = (float)(self.currentGain * 2.0);
+    self.creakPlayerNode.volume = (float)(self.currentGain * 2.0);
     self.varispeadUnit.rate = (float)self.currentRate;
 }
 

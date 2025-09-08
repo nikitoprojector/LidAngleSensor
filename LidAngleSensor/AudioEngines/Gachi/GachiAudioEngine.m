@@ -1,0 +1,345 @@
+//
+//  GachiAudioEngine.m
+//  LidAngleSensor
+//
+//  Gachi sound mode with MP3 support and audio stretching.
+//
+
+#import "GachiAudioEngine.h"
+
+// Movement session detection
+static const double kMovementSessionTimeoutSec = 2.0; // Time without movement before considering it a new session
+
+// Gachi sound files
+static NSArray<NSString *> *kGachiSoundFiles;
+
+@interface GachiAudioEngine ()
+
+// Audio nodes - we need separate nodes for each format to avoid reconnection issues
+@property (nonatomic, strong) NSMutableArray<AVAudioPlayerNode *> *playerNodes;
+@property (nonatomic, strong) NSMutableArray<AVAudioUnitVarispeed *> *varispeadUnits;
+@property (nonatomic, strong) AVAudioMixerNode *mixerNode;
+
+// Audio files
+@property (nonatomic, strong) NSArray<AVAudioFile *> *gachiFiles;
+@property (nonatomic, assign) NSInteger currentSoundIndex;
+
+// Movement session tracking
+@property (nonatomic, assign) BOOL isInMovementSession;
+@property (nonatomic, assign) NSTimeInterval lastSignificantMovementTime;
+@property (nonatomic, assign) BOOL hasStartedPlaying; // Track if we've started playing at least once
+
+@end
+
+@implementation GachiAudioEngine
+
++ (void)initialize {
+    if (self == [GachiAudioEngine class]) {
+        kGachiSoundFiles = @[
+            @"AUUUUUUUGH",
+            @"OOOOOOOOOOO", 
+            @"RIP_EARS",
+            @"VAN_DARKHOLME_WOO"
+        ];
+    }
+}
+
+- (instancetype)init {
+    // Initialize our arrays BEFORE calling super init
+    // This is critical because BaseAudioEngine.init calls our overridden methods
+    _playerNodes = [[NSMutableArray alloc] init];
+    _varispeadUnits = [[NSMutableArray alloc] init];
+    _currentSoundIndex = -1;
+    _isInMovementSession = NO;
+    _hasStartedPlaying = NO;
+    _lastSignificantMovementTime = CACurrentMediaTime();
+    
+    self = [super init];
+    if (self) {
+        NSLog(@"[GachiAudioEngine] GachiAudioEngine initialized successfully");
+    }
+    return self;
+}
+
+#pragma mark - BaseAudioEngine Overrides
+
+- (BOOL)setupAudioEngine {
+    [super setupAudioEngine]; // This creates the basic audioEngine
+    
+    // Create mixer node
+    self.mixerNode = self.audioEngine.mainMixerNode;
+    
+    return YES;
+}
+
+- (BOOL)loadAudioFiles {
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSMutableArray<AVAudioFile *> *files = [[NSMutableArray alloc] init];
+    
+    for (NSString *fileName in kGachiSoundFiles) {
+        // Try MP3 first (files are copied directly to Resources folder)
+        NSString *filePath = [bundle pathForResource:fileName ofType:@"mp3"];
+        if (!filePath) {
+            // Fallback to WAV if MP3 not found
+            filePath = [bundle pathForResource:fileName ofType:@"wav"];
+        }
+        
+        if (!filePath) {
+            NSLog(@"[GachiAudioEngine] Could not find %@.mp3 or %@.wav in bundle resources", fileName, fileName);
+            continue;
+        }
+        
+        NSError *error;
+        NSURL *fileURL = [NSURL fileURLWithPath:filePath];
+        AVAudioFile *audioFile = [[AVAudioFile alloc] initForReading:fileURL error:&error];
+        
+        if (!audioFile) {
+            NSLog(@"[GachiAudioEngine] Failed to load %@: %@", fileName, error.localizedDescription);
+            continue;
+        }
+        
+        [files addObject:audioFile];
+        NSLog(@"[GachiAudioEngine] Successfully loaded %@ (length: %lld frames, format: %@)", 
+              fileName, audioFile.length, audioFile.processingFormat);
+    }
+    
+    if (files.count == 0) {
+        NSLog(@"[GachiAudioEngine] No gachi sound files could be loaded");
+        return NO;
+    }
+    
+    self.gachiFiles = [files copy];
+    NSLog(@"[GachiAudioEngine] Loaded %lu gachi sound files", (unsigned long)self.gachiFiles.count);
+    
+    // Create separate audio nodes for each file to avoid format switching issues
+    [self setupAudioNodesForFiles];
+    
+    // Select initial random sound but don't start playing yet
+    NSLog(@"[GachiAudioEngine] About to select initial random sound, gachiFiles.count: %lu", (unsigned long)self.gachiFiles.count);
+    [self selectNewRandomSound];
+    NSLog(@"[GachiAudioEngine] After selectNewRandomSound, currentSoundIndex: %ld", (long)self.currentSoundIndex);
+    
+    return YES;
+}
+
+- (void)setupAudioNodesForFiles {
+    NSLog(@"[GachiAudioEngine] setupAudioNodesForFiles called - gachiFiles.count: %lu, playerNodes.count: %lu, varispeadUnits.count: %lu", 
+          (unsigned long)self.gachiFiles.count, (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
+    
+    if (!self.audioEngine) {
+        NSLog(@"[GachiAudioEngine] ERROR: audioEngine is nil in setupAudioNodesForFiles");
+        return;
+    }
+    
+    if (!self.mixerNode) {
+        NSLog(@"[GachiAudioEngine] ERROR: mixerNode is nil in setupAudioNodesForFiles");
+        return;
+    }
+    
+    // Create a player node and varispeed unit for each audio file
+    for (NSUInteger i = 0; i < self.gachiFiles.count; i++) {
+        AVAudioFile *file = self.gachiFiles[i];
+        
+        // Create nodes
+        AVAudioPlayerNode *playerNode = [[AVAudioPlayerNode alloc] init];
+        AVAudioUnitVarispeed *varispeadUnit = [[AVAudioUnitVarispeed alloc] init];
+        
+        NSLog(@"[GachiAudioEngine] Created nodes for file %lu: playerNode=%@, varispeadUnit=%@", i, playerNode, varispeadUnit);
+        
+        // Attach to engine
+        [self.audioEngine attachNode:playerNode];
+        [self.audioEngine attachNode:varispeadUnit];
+        
+        NSLog(@"[GachiAudioEngine] Attached nodes to engine for file %lu", i);
+        
+        // Connect: Player -> Varispeed -> Mixer
+        AVAudioFormat *fileFormat = file.processingFormat;
+        [self.audioEngine connect:playerNode to:varispeadUnit format:fileFormat];
+        [self.audioEngine connect:varispeadUnit to:self.mixerNode format:fileFormat];
+        
+        NSLog(@"[GachiAudioEngine] Connected nodes for file %lu with format: %@", i, fileFormat);
+        
+        // Store nodes
+        [self.playerNodes addObject:playerNode];
+        [self.varispeadUnits addObject:varispeadUnit];
+        
+        NSLog(@"[GachiAudioEngine] Added nodes to arrays for file %lu - playerNodes.count now: %lu, varispeadUnits.count now: %lu", 
+              i, (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
+    }
+    
+    NSLog(@"[GachiAudioEngine] setupAudioNodesForFiles completed - final counts: playerNodes=%lu, varispeadUnits=%lu", 
+          (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
+}
+
+- (void)startAudioPlayback {
+    // DON'T start playing immediately - wait for movement
+    NSLog(@"[GachiAudioEngine] Started gachi engine (waiting for movement)");
+}
+
+- (void)updateAudioParametersWithVelocity:(double)velocity {
+    double speed = velocity; // Velocity is already absolute
+    
+    // Check if this is significant movement (above deadzone)
+    if (speed > 1.0) { // Using same deadzone as base class
+        self.lastSignificantMovementTime = CACurrentMediaTime();
+        
+        // Check if we're starting a new movement session
+        if (!self.isInMovementSession) {
+            NSLog(@"[GachiAudioEngine] Starting new movement session");
+            self.isInMovementSession = YES;
+            
+            // Only start playing if we haven't started yet, or switch sound if we have
+            if (!self.hasStartedPlaying) {
+                [self startGachiLoop];
+            } else {
+                [self switchToNewRandomSoundIfNeeded];
+            }
+        }
+    }
+    
+    // Check if movement session has ended
+    double currentTime = CACurrentMediaTime();
+    double timeSinceSignificantMovement = currentTime - self.lastSignificantMovementTime;
+    if (self.isInMovementSession && timeSinceSignificantMovement > kMovementSessionTimeoutSec) {
+        NSLog(@"[GachiAudioEngine] Movement session ended");
+        self.isInMovementSession = NO;
+    }
+    
+    // For gachi mode: simple on/off based on deadzone, no volume modulation
+    double gain;
+    if (speed < 1.0) { // Below deadzone: no sound
+        gain = 0.0;
+    } else {
+        gain = 1.0; // Above deadzone: full volume
+    }
+    
+    // Calculate target pitch/tempo rate based on movement speed (keep this for variety)
+    double normalizedVelocity = fmax(0.0, fmin(1.0, speed / 100.0));
+    double rate = 0.80 + normalizedVelocity * (1.10 - 0.80);
+    rate = fmax(0.80, fmin(1.10, rate));
+    
+    // Store targets for smooth ramping
+    self.targetGain = gain;
+    self.targetRate = rate;
+    
+    // Apply smooth parameter transitions
+    [self rampToTargetParameters];
+}
+
+- (void)rampToTargetParameters {
+    [super rampToTargetParameters]; // This updates currentGain and currentRate
+    
+    if (!self.isEngineRunning || !self.hasStartedPlaying || self.currentSoundIndex < 0) {
+        return;
+    }
+    
+    // Apply ramped values to current audio nodes (no volume multiplier for gachi mode)
+    AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
+    AVAudioUnitVarispeed *currentVarispeadUnit = self.varispeadUnits[self.currentSoundIndex];
+    
+    currentPlayerNode.volume = (float)self.currentGain;
+    currentVarispeadUnit.rate = (float)self.currentRate;
+}
+
+#pragma mark - Sound Selection and Playback
+
+- (void)selectNewRandomSound {
+    if (self.gachiFiles.count == 0) {
+        return;
+    }
+    
+    // Select a random sound
+    NSInteger newIndex = arc4random_uniform((uint32_t)self.gachiFiles.count);
+    self.currentSoundIndex = newIndex;
+    
+    NSString *fileName = kGachiSoundFiles[newIndex];
+    NSLog(@"[GachiAudioEngine] Selected random sound: %@ (index %ld)", fileName, (long)newIndex);
+}
+
+- (void)startGachiLoop {
+    NSLog(@"[GachiAudioEngine] startGachiLoop called - currentSoundIndex: %ld, engineRunning: %d, gachiFiles.count: %lu", 
+          (long)self.currentSoundIndex, self.isEngineRunning, (unsigned long)self.gachiFiles.count);
+    
+    if (self.currentSoundIndex < 0 || !self.isEngineRunning) {
+        NSLog(@"[GachiAudioEngine] Cannot start loop - currentSoundIndex: %ld, engineRunning: %d", 
+              (long)self.currentSoundIndex, self.isEngineRunning);
+        
+        // Try to fix the issue by selecting a new random sound if we have files
+        if (self.gachiFiles.count > 0 && self.currentSoundIndex < 0) {
+            NSLog(@"[GachiAudioEngine] Attempting to fix currentSoundIndex by selecting new random sound");
+            [self selectNewRandomSound];
+            NSLog(@"[GachiAudioEngine] After fix attempt, currentSoundIndex: %ld", (long)self.currentSoundIndex);
+        }
+        
+        if (self.currentSoundIndex < 0 || !self.isEngineRunning) {
+            return;
+        }
+    }
+    
+    // Additional safety checks
+    if (self.currentSoundIndex >= (NSInteger)self.gachiFiles.count || 
+        self.currentSoundIndex >= (NSInteger)self.playerNodes.count ||
+        self.currentSoundIndex >= (NSInteger)self.varispeadUnits.count) {
+        NSLog(@"[GachiAudioEngine] Invalid currentSoundIndex: %ld, arrays sizes: gachiFiles=%lu, playerNodes=%lu, varispeadUnits=%lu", 
+              (long)self.currentSoundIndex, (unsigned long)self.gachiFiles.count, 
+              (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
+        return;
+    }
+    
+    AVAudioFile *currentFile = self.gachiFiles[self.currentSoundIndex];
+    AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
+    
+    // Stop any current playback from all nodes
+    for (AVAudioPlayerNode *node in self.playerNodes) {
+        [node stop];
+    }
+    
+    // Reset file position to beginning
+    currentFile.framePosition = 0;
+    
+    // Schedule the gachi sound to play continuously
+    AVAudioFrameCount frameCount = (AVAudioFrameCount)currentFile.length;
+    AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:currentFile.processingFormat
+                                                             frameCapacity:frameCount];
+    
+    if (!buffer) {
+        NSLog(@"[GachiAudioEngine] Failed to create buffer for %@ frames", @(frameCount));
+        return;
+    }
+    
+    NSError *error;
+    if (![currentFile readIntoBuffer:buffer error:&error]) {
+        NSLog(@"[GachiAudioEngine] Failed to read gachi sound into buffer: %@", error.localizedDescription);
+        return;
+    }
+    
+    NSLog(@"[GachiAudioEngine] Buffer created successfully: %@ frames", @(buffer.frameLength));
+    
+    [currentPlayerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
+    [currentPlayerNode play];
+    
+    // Set initial volume to 0 (will be controlled by gain)
+    currentPlayerNode.volume = 0.0;
+    self.hasStartedPlaying = YES;
+    
+    NSLog(@"[GachiAudioEngine] Started playing gachi sound loop");
+}
+
+- (void)switchToNewRandomSoundIfNeeded {
+    // This method switches to a new random sound
+    // Only call this when starting a new movement session
+    
+    if (!self.isEngineRunning) {
+        return;
+    }
+    
+    NSLog(@"[GachiAudioEngine] Switching to new random sound for new movement session");
+    
+    // Select new random sound
+    [self selectNewRandomSound];
+    
+    // Start the loop with new sound
+    [self startGachiLoop];
+}
+
+@end

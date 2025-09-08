@@ -6,9 +6,9 @@
 //
 
 #import "SoundManager.h"
-#import "CreakAudioEngine.h"
-#import "ThereminAudioEngine.h"
-#import "GachiAudioEngine.h"
+#import "AudioEngines/Creak/CreakAudioEngine.h"
+#import "AudioEngines/Theremin/ThereminAudioEngine.h"
+#import "AudioEngines/Gachi/GachiAudioEngine.h"
 
 @interface SoundManager ()
 @property (nonatomic, assign) NSTimeInterval lastSoundTime;

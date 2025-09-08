@@ -23,8 +23,6 @@
 @property (strong, nonatomic) NSMenuItem *angleMenuItem;
 @property (strong, nonatomic) NSMenuItem *statusMenuItem;
 @property (strong, nonatomic) NSMenuItem *audioToggleMenuItem;
-@property (strong, nonatomic) NSMenuItem *volumeMenuItem;
-@property (strong, nonatomic) NSSlider *volumeSlider;
 @property (strong, nonatomic) NSMutableArray<NSMenuItem *> *soundModeMenuItems;
 
 - (instancetype)init;
