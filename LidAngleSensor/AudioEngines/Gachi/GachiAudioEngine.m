@@ -11,8 +11,29 @@
 static const double kMovementSessionTimeoutSec = 0.15; // Time without movement before considering it a new session
 static const double kFadeOutDurationSec = 0.1; // Duration for smooth fade-out
 
-// Gachi sound files
-static NSArray<NSString *> *kGachiSoundFiles;
+// Gachi sound types - fixed set of 4 sounds
+typedef NS_ENUM(NSInteger, GachiSoundType) {
+    GachiSoundAUUUUUUUGH = 0,
+    GachiSoundOOOOOOOOOO = 1,
+    GachiSoundRIP_EARS = 2,
+    GachiSoundVAN_DARKHOLME_WOO = 3,
+    GachiSoundCount = 4
+};
+
+// Sound configuration structure
+typedef struct {
+    NSString *fileName;
+    BOOL shouldLoop;        // YES for looping, NO for stretching
+    BOOL shouldStretch;     // YES to stretch with varispeed
+} GachiSoundConfig;
+
+// Fixed configuration for all 4 gachi sounds
+static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
+    {@"AUUUUUUUGH", YES, NO},           // Loop, don't stretch
+    {@"OOOOOOOOOOO", YES, NO},          // Loop, don't stretch  
+    {@"RIP_EARS", YES, NO},             // Loop, don't stretch
+    {@"VAN_DARKHOLME_WOO", YES, NO}     // Loop, don't stretch
+};
 
 @interface GachiAudioEngine ()
 
@@ -46,14 +67,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
 @implementation GachiAudioEngine
 
 + (void)initialize {
-    if (self == [GachiAudioEngine class]) {
-        kGachiSoundFiles = @[
-            @"AUUUUUUUGH",
-            @"OOOOOOOOOOO", 
-            @"RIP_EARS",
-            @"VAN_DARKHOLME_WOO"
-        ];
-    }
+    // No longer needed - using fixed configuration structure
 }
 
 - (instancetype)init {
@@ -99,7 +113,9 @@ static NSArray<NSString *> *kGachiSoundFiles;
     NSBundle *bundle = [NSBundle mainBundle];
     NSMutableArray<AVAudioFile *> *files = [[NSMutableArray alloc] init];
     
-    for (NSString *fileName in kGachiSoundFiles) {
+    for (int i = 0; i < GachiSoundCount; i++) {
+        NSString *fileName = kGachiSoundConfigs[i].fileName;
+        
         // Try MP3 first (files are copied directly to Resources folder)
         NSString *filePath = [bundle pathForResource:fileName ofType:@"mp3"];
         if (!filePath) {
@@ -299,7 +315,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
     NSInteger newIndex = arc4random_uniform((uint32_t)self.gachiFiles.count);
     self.currentSoundIndex = newIndex;
     
-    NSString *fileName = kGachiSoundFiles[newIndex];
+    NSString *fileName = kGachiSoundConfigs[newIndex].fileName;
     NSLog(@"[GachiAudioEngine] Selected random sound: %@ (index %ld)", fileName, (long)newIndex);
 }
 
@@ -336,6 +352,9 @@ static NSArray<NSString *> *kGachiSoundFiles;
     AVAudioFile *currentFile = self.gachiFiles[self.currentSoundIndex];
     AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
     
+    // Get sound configuration for current sound
+    GachiSoundConfig config = kGachiSoundConfigs[self.currentSoundIndex];
+    
     // Stop any current playback from all nodes
     for (AVAudioPlayerNode *node in self.playerNodes) {
         [node stop];
@@ -343,8 +362,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     // Reset file position to beginning
     currentFile.framePosition = 0;
-    
-    // Schedule the gachi sound to play continuously
+
     AVAudioFrameCount frameCount = (AVAudioFrameCount)currentFile.length;
     AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:currentFile.processingFormat
                                                              frameCapacity:frameCount];
@@ -362,7 +380,10 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     NSLog(@"[GachiAudioEngine] Buffer created successfully: %@ frames", @(buffer.frameLength));
     
+    // All sounds now use simple looping behavior
+    NSLog(@"[GachiAudioEngine] Starting looping playback for %@", config.fileName);
     [currentPlayerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
+    
     [currentPlayerNode play];
     
     // Set initial volume to 0 (will be controlled by gain)
@@ -371,6 +392,7 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     NSLog(@"[GachiAudioEngine] Started playing gachi sound loop");
 }
+
 
 - (void)switchToNewRandomSoundIfNeeded {
     // This method switches to a new random sound
