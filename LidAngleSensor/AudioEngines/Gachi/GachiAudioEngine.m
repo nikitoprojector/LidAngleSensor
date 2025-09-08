@@ -8,7 +8,7 @@
 #import "GachiAudioEngine.h"
 
 // Movement session detection
-static const double kMovementSessionTimeoutSec = 2.0; // Time without movement before considering it a new session
+static const double kMovementSessionTimeoutSec = 0.3; // Time without movement before considering it a new session
 
 // Gachi sound files
 static NSArray<NSString *> *kGachiSoundFiles;
@@ -27,7 +27,13 @@ static NSArray<NSString *> *kGachiSoundFiles;
 // Movement session tracking
 @property (nonatomic, assign) BOOL isInMovementSession;
 @property (nonatomic, assign) NSTimeInterval lastSignificantMovementTime;
+@property (nonatomic, assign) NSTimeInterval lastSessionEndTime; // Track when last session ended
 @property (nonatomic, assign) BOOL hasStartedPlaying; // Track if we've started playing at least once
+
+// Movement trend detection
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *velocityBuffer; // Buffer of recent velocities
+@property (nonatomic, assign) NSTimeInterval lastVelocityUpdateTime;
+@property (nonatomic, assign) BOOL isDecelerating; // Track if movement is slowing down
 
 @end
 
@@ -53,6 +59,12 @@ static NSArray<NSString *> *kGachiSoundFiles;
     _isInMovementSession = NO;
     _hasStartedPlaying = NO;
     _lastSignificantMovementTime = CACurrentMediaTime();
+    _lastSessionEndTime = 0.0;
+    
+    // Initialize velocity buffer for trend detection
+    _velocityBuffer = [[NSMutableArray alloc] init];
+    _lastVelocityUpdateTime = 0.0;
+    _isDecelerating = NO;
     
     self = [super init];
     if (self) {
@@ -179,20 +191,28 @@ static NSArray<NSString *> *kGachiSoundFiles;
 - (void)updateAudioParametersWithVelocity:(double)velocity {
     double speed = velocity; // Velocity is already absolute
     
+    // Update velocity buffer for trend detection
+    [self updateVelocityBuffer:speed];
+    
     // Check if this is significant movement (above deadzone)
     if (speed > 1.0) { // Using same deadzone as base class
-        self.lastSignificantMovementTime = CACurrentMediaTime();
-        
         // Check if we're starting a new movement session
         if (!self.isInMovementSession) {
-            NSLog(@"[GachiAudioEngine] Starting new movement session");
-            self.isInMovementSession = YES;
+            // Check if enough time has passed since last session ended (dead time)
+            double currentTime = CACurrentMediaTime();
+            double timeSinceLastSessionEnd = currentTime - self.lastSessionEndTime;
             
-            // Only start playing if we haven't started yet, or switch sound if we have
-            if (!self.hasStartedPlaying) {
-                [self startGachiLoop];
-            } else {
+            if (self.lastSessionEndTime == 0.0 || timeSinceLastSessionEnd > 0.2) { // 0.5 second dead time
+                NSLog(@"[GachiAudioEngine] Starting new movement session");
+                self.isInMovementSession = YES;
+                
+                // Initialize lastSignificantMovementTime for new session
+                self.lastSignificantMovementTime = currentTime;
+                
+                // Always switch to new random sound for new movement session
                 [self switchToNewRandomSoundIfNeeded];
+            } else {
+                NSLog(@"[GachiAudioEngine] Ignoring movement - too soon after last session (%.3f sec)", timeSinceLastSessionEnd);
             }
         }
     }
@@ -203,6 +223,10 @@ static NSArray<NSString *> *kGachiSoundFiles;
     if (self.isInMovementSession && timeSinceSignificantMovement > kMovementSessionTimeoutSec) {
         NSLog(@"[GachiAudioEngine] Movement session ended");
         self.isInMovementSession = NO;
+        self.lastSessionEndTime = currentTime; // Record when session ended
+        
+        // Stop all audio playback when movement session ends
+        [self stopAllAudioPlayback];
     }
     
     // For gachi mode: simple on/off based on deadzone, no volume modulation
@@ -211,6 +235,9 @@ static NSArray<NSString *> *kGachiSoundFiles;
         gain = 0.0;
     } else {
         gain = 1.0; // Above deadzone: full volume
+        
+        // Update lastSignificantMovementTime only when sound is actually playing
+        self.lastSignificantMovementTime = CACurrentMediaTime();
     }
     
     // Calculate target pitch/tempo rate based on movement speed (keep this for variety)
@@ -340,6 +367,81 @@ static NSArray<NSString *> *kGachiSoundFiles;
     
     // Start the loop with new sound
     [self startGachiLoop];
+}
+
+- (void)stopAllAudioPlayback {
+    NSLog(@"[GachiAudioEngine] Stopping all audio playback");
+    
+    // Stop all player nodes
+    for (AVAudioPlayerNode *node in self.playerNodes) {
+        if (node.isPlaying) {
+            [node stop];
+        }
+    }
+    
+    // Reset playback state
+    self.hasStartedPlaying = NO;
+    
+    NSLog(@"[GachiAudioEngine] All audio playback stopped");
+}
+
+#pragma mark - Movement Trend Detection
+
+- (void)updateVelocityBuffer:(double)velocity {
+    double currentTime = CACurrentMediaTime();
+    
+    // Only update buffer every 50ms to avoid too frequent updates
+    if (currentTime - self.lastVelocityUpdateTime < 0.05) {
+        return;
+    }
+    
+    self.lastVelocityUpdateTime = currentTime;
+    
+    // Add current velocity to buffer
+    [self.velocityBuffer addObject:@(velocity)];
+    
+    // Keep buffer size limited to last 5 measurements (250ms of data)
+    if (self.velocityBuffer.count > 5) {
+        [self.velocityBuffer removeObjectAtIndex:0];
+    }
+    
+    // Detect deceleration trend if we have enough data
+    if (self.velocityBuffer.count >= 3) {
+        [self detectDecelerationTrend];
+    }
+}
+
+- (void)detectDecelerationTrend {
+    if (self.velocityBuffer.count < 3) {
+        return;
+    }
+    
+    // Get recent velocities
+    double recent = [self.velocityBuffer.lastObject doubleValue];
+    double middle = [self.velocityBuffer[self.velocityBuffer.count - 2] doubleValue];
+    double older = [self.velocityBuffer[self.velocityBuffer.count - 3] doubleValue];
+    
+    // Check if there's a consistent downward trend
+    BOOL wasDecelerating = self.isDecelerating;
+    self.isDecelerating = (recent < middle) && (middle < older) && (older - recent > 2.0);
+    
+    if (self.isDecelerating && !wasDecelerating) {
+        NSLog(@"[GachiAudioEngine] Deceleration detected: %.1f -> %.1f -> %.1f", older, middle, recent);
+        
+        // Start early countdown when deceleration is detected
+        if (self.isInMovementSession && recent > 1.0) {
+            // Reduce the effective timeout when decelerating
+            double earlyTimeout = kMovementSessionTimeoutSec * 0.5; // Use half the normal timeout
+            double currentTime = CACurrentMediaTime();
+            double adjustedLastMovementTime = currentTime - earlyTimeout;
+            
+            // Only adjust if it would make the timeout shorter
+            if (adjustedLastMovementTime > self.lastSignificantMovementTime) {
+                self.lastSignificantMovementTime = adjustedLastMovementTime;
+                NSLog(@"[GachiAudioEngine] Applied early timeout due to deceleration");
+            }
+        }
+    }
 }
 
 @end
