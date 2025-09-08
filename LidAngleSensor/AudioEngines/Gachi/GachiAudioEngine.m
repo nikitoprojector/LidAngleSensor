@@ -8,7 +8,8 @@
 #import "GachiAudioEngine.h"
 
 // Movement session detection
-static const double kMovementSessionTimeoutSec = 0.3; // Time without movement before considering it a new session
+static const double kMovementSessionTimeoutSec = 0.15; // Time without movement before considering it a new session
+static const double kFadeOutDurationSec = 0.1; // Duration for smooth fade-out
 
 // Gachi sound files
 static NSArray<NSString *> *kGachiSoundFiles;
@@ -34,6 +35,11 @@ static NSArray<NSString *> *kGachiSoundFiles;
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *velocityBuffer; // Buffer of recent velocities
 @property (nonatomic, assign) NSTimeInterval lastVelocityUpdateTime;
 @property (nonatomic, assign) BOOL isDecelerating; // Track if movement is slowing down
+
+// Fade-out state
+@property (nonatomic, assign) BOOL isFadingOut; // Track if we're in fade-out mode
+@property (nonatomic, assign) NSTimeInterval fadeOutStartTime; // When fade-out started
+@property (nonatomic, assign) double fadeOutStartGain; // Gain level when fade-out started
 
 @end
 
@@ -65,6 +71,11 @@ static NSArray<NSString *> *kGachiSoundFiles;
     _velocityBuffer = [[NSMutableArray alloc] init];
     _lastVelocityUpdateTime = 0.0;
     _isDecelerating = NO;
+    
+    // Initialize fade-out state
+    _isFadingOut = NO;
+    _fadeOutStartTime = 0.0;
+    _fadeOutStartGain = 0.0;
     
     self = [super init];
     if (self) {
@@ -191,18 +202,27 @@ static NSArray<NSString *> *kGachiSoundFiles;
 - (void)updateAudioParametersWithVelocity:(double)velocity {
     double speed = velocity; // Velocity is already absolute
     
+    // Update fade-out first
+    [self updateFadeOut];
+    
     // Update velocity buffer for trend detection
     [self updateVelocityBuffer:speed];
     
     // Check if this is significant movement (above deadzone)
     if (speed > 1.0) { // Using same deadzone as base class
+        // Cancel fade-out only if movement is substantial (not just sensor noise)
+        if (self.isFadingOut && speed > 5.0) { // Require stronger movement to cancel fade-out
+            NSLog(@"[GachiAudioEngine] Substantial movement detected (%.1f) - canceling fade-out", speed);
+            self.isFadingOut = NO;
+        }
+        
         // Check if we're starting a new movement session
         if (!self.isInMovementSession) {
             // Check if enough time has passed since last session ended (dead time)
             double currentTime = CACurrentMediaTime();
             double timeSinceLastSessionEnd = currentTime - self.lastSessionEndTime;
             
-            if (self.lastSessionEndTime == 0.0 || timeSinceLastSessionEnd > 0.2) { // 0.5 second dead time
+            if (self.lastSessionEndTime == 0.0 || timeSinceLastSessionEnd > 0.3) { // Increased dead time to 0.3 seconds
                 NSLog(@"[GachiAudioEngine] Starting new movement session");
                 self.isInMovementSession = YES;
                 
@@ -221,12 +241,12 @@ static NSArray<NSString *> *kGachiSoundFiles;
     double currentTime = CACurrentMediaTime();
     double timeSinceSignificantMovement = currentTime - self.lastSignificantMovementTime;
     if (self.isInMovementSession && timeSinceSignificantMovement > kMovementSessionTimeoutSec) {
-        NSLog(@"[GachiAudioEngine] Movement session ended");
+        NSLog(@"[GachiAudioEngine] Movement session ended - starting fade-out");
         self.isInMovementSession = NO;
         self.lastSessionEndTime = currentTime; // Record when session ended
         
-        // Stop all audio playback when movement session ends
-        [self stopAllAudioPlayback];
+        // Start fade-out instead of immediate stop
+        [self startFadeOut];
     }
     
     // For gachi mode: simple on/off based on deadzone, no volume modulation
@@ -382,7 +402,50 @@ static NSArray<NSString *> *kGachiSoundFiles;
     // Reset playback state
     self.hasStartedPlaying = NO;
     
+    // Reset fade-out state
+    self.isFadingOut = NO;
+    self.fadeOutStartTime = 0.0;
+    self.fadeOutStartGain = 0.0;
+    
     NSLog(@"[GachiAudioEngine] All audio playback stopped");
+}
+
+#pragma mark - Fade-out Management
+
+- (void)startFadeOut {
+    if (self.isFadingOut || !self.hasStartedPlaying) {
+        return; // Already fading out or not playing
+    }
+    
+    double currentTime = CACurrentMediaTime();
+    self.isFadingOut = YES;
+    self.fadeOutStartTime = currentTime;
+    self.fadeOutStartGain = self.currentGain; // Store current gain level
+    
+    NSLog(@"[GachiAudioEngine] Started fade-out from gain %.2f", self.fadeOutStartGain);
+}
+
+- (void)updateFadeOut {
+    if (!self.isFadingOut) {
+        return;
+    }
+    
+    double currentTime = CACurrentMediaTime();
+    double fadeProgress = (currentTime - self.fadeOutStartTime) / kFadeOutDurationSec;
+    
+    if (fadeProgress >= 1.0) {
+        // Fade-out complete
+        NSLog(@"[GachiAudioEngine] Fade-out complete - stopping playback");
+        [self stopAllAudioPlayback];
+        self.isFadingOut = NO;
+        return;
+    }
+    
+    // Calculate fade-out gain (linear fade from fadeOutStartGain to 0)
+    double fadeGain = self.fadeOutStartGain * (1.0 - fadeProgress);
+    
+    // Override targetGain during fade-out
+    self.targetGain = fadeGain;
 }
 
 #pragma mark - Movement Trend Detection
