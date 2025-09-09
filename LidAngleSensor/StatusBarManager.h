@@ -25,6 +25,10 @@
 @property (strong, nonatomic) NSMenuItem *audioToggleMenuItem;
 @property (strong, nonatomic) NSMutableArray<NSMenuItem *> *soundModeMenuItems;
 
+// Submenu items for track selection
+@property (strong, nonatomic) NSMenu *gachigasmSubmenu;
+@property (strong, nonatomic) NSMenu *animeSubmenu;
+
 - (instancetype)init;
 - (void)setupStatusBar;
 - (void)setupMenu;
@@ -39,5 +43,9 @@
 - (void)selectOffMode:(id)sender;
 - (void)showAbout:(id)sender;
 - (void)quitApplication:(id)sender;
+
+// Track selection actions
+- (void)selectGachiTrack:(id)sender;
+- (void)selectAnimeTrack:(id)sender;
 
 @end

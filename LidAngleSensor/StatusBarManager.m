@@ -8,6 +8,8 @@
 #import "StatusBarManager.h"
 #import "LidAngleSensor.h"
 #import "SoundManager.h"
+#import "AudioEngines/Gachi/GachiAudioEngine.h"
+#import "AudioEngines/Anime/AnimeAudioEngine.h"
 
 @implementation StatusBarManager
 
@@ -151,11 +153,59 @@
         SoundType soundType = (SoundType)[soundTypeNumber integerValue];
         NSString *soundName = [self.soundManager nameForSoundType:soundType];
         
-        NSMenuItem *menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
-                                                          action:@selector(selectSoundMode:)
-                                                   keyEquivalent:@""];
-        [menuItem setTarget:self];
-        [menuItem setTag:soundType]; // Store sound type in tag
+        NSMenuItem *menuItem;
+        
+        // Create submenus for gachigasm and anime modes
+        if (soundType == SoundTypeGachigasm) {
+            menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
+                                                  action:nil
+                                           keyEquivalent:@""];
+            
+            // Create submenu for gachigasm tracks
+            self.gachigasmSubmenu = [[NSMenu alloc] init];
+            
+            // Add individual track options
+            NSArray *gachiTrackNames = @[@"AUUUUUUUGH", @"OOOOOOOOOOO", @"RIP_EARS", @"VAN_DARKHOLME_WOO"];
+            for (NSUInteger i = 0; i < gachiTrackNames.count; i++) {
+                NSMenuItem *trackItem = [[NSMenuItem alloc] initWithTitle:gachiTrackNames[i]
+                                                                   action:@selector(selectGachiTrack:)
+                                                            keyEquivalent:@""];
+                [trackItem setTarget:self];
+                [trackItem setTag:i]; // Store track index in tag
+                [self.gachigasmSubmenu addItem:trackItem];
+            }
+            
+            [menuItem setSubmenu:self.gachigasmSubmenu];
+            
+        } else if (soundType == SoundTypeAnime) {
+            menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
+                                                  action:nil
+                                           keyEquivalent:@""];
+            
+            // Create submenu for anime tracks
+            self.animeSubmenu = [[NSMenu alloc] init];
+            
+            // Add individual track options
+            NSArray *animeTrackNames = @[@"aaaaaa", @"ara_1", @"ara_2", @"ara_3", @"nya", @"senpai", @"yamete"];
+            for (NSUInteger i = 0; i < animeTrackNames.count; i++) {
+                NSMenuItem *trackItem = [[NSMenuItem alloc] initWithTitle:animeTrackNames[i]
+                                                                   action:@selector(selectAnimeTrack:)
+                                                            keyEquivalent:@""];
+                [trackItem setTarget:self];
+                [trackItem setTag:i]; // Store track index in tag
+                [self.animeSubmenu addItem:trackItem];
+            }
+            
+            [menuItem setSubmenu:self.animeSubmenu];
+            
+        } else {
+            // Regular menu item for other sound types
+            menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
+                                                  action:@selector(selectSoundMode:)
+                                           keyEquivalent:@""];
+            [menuItem setTarget:self];
+            [menuItem setTag:soundType]; // Store sound type in tag
+        }
         
         // Set default selection (Off)
         if (soundType == SoundTypeOff) {
@@ -267,7 +317,7 @@
         NSLog(@"[StatusBarManager] Loaded sound type: %ld", (long)savedSoundType);
         
         // Validate sound type and default to Off if invalid
-        if (savedSoundType < SoundTypeOff || savedSoundType > SoundTypeGachi) {
+        if (savedSoundType < SoundTypeOff || savedSoundType > SoundTypeAnime) {
             NSLog(@"[StatusBarManager] Invalid sound type %ld, defaulting to SoundTypeOff", (long)savedSoundType);
             savedSoundType = SoundTypeOff;
         }
@@ -364,11 +414,29 @@
 
 
 - (void)showAbout:(id)sender {
-    NSAlert *alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"Lid Angle Sensor"];
-    [alert setInformativeText:@"A utility that shows the angle from your MacBook's lid sensor and can play various audio effects.\n\nModified for background operation with system tray support and multiple sound options."];
-    [alert addButtonWithTitle:@"OK"];
-    [alert runModal];
+    @try {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"Lid Angle Sensor"];
+        [alert setInformativeText:@"A utility that shows the angle from your MacBook's lid sensor and can play various audio effects.\n\nModified by vtornikita for background operation with system tray support and multiple sound options."];
+        [alert addButtonWithTitle:@"OK"];
+        [alert setAlertStyle:NSAlertStyleInformational];
+        
+        // Store reference to status item to prevent it from disappearing
+        NSStatusItem *statusItemRef = self.statusItem;
+        
+        // Run the alert on the main thread to prevent crashes
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [alert runModal];
+            
+            // Ensure status item remains visible after alert is dismissed
+            if (statusItemRef) {
+                [statusItemRef setVisible:YES];
+                NSLog(@"[StatusBarManager] Status item visibility restored after About dialog");
+            }
+        });
+    } @catch (NSException *exception) {
+        NSLog(@"[StatusBarManager] Exception in showAbout: %@", exception.reason);
+    }
 }
 
 - (void)quitApplication:(id)sender {
@@ -376,6 +444,44 @@
     [self.soundManager stopAllAudio];
     [self.lidSensor stopLidAngleUpdates];
     [[NSApplication sharedApplication] terminate:nil];
+}
+
+#pragma mark - Track Selection Actions
+
+- (void)selectGachiTrack:(id)sender {
+    NSMenuItem *menuItem = (NSMenuItem *)sender;
+    NSInteger trackIndex = menuItem.tag;
+    
+    NSLog(@"[StatusBarManager] Selected gachi track %ld", (long)trackIndex);
+    
+    // Set to gachigasm mode and specify the track
+    [self.soundManager setSoundType:SoundTypeGachigasm];
+    
+    // Tell the gachi audio engine to use the specific track
+    if (self.soundManager.gachiAudioEngine) {
+        [self.soundManager.gachiAudioEngine selectSpecificTrack:trackIndex];
+    }
+    
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectAnimeTrack:(id)sender {
+    NSMenuItem *menuItem = (NSMenuItem *)sender;
+    NSInteger trackIndex = menuItem.tag;
+    
+    NSLog(@"[StatusBarManager] Selected anime track %ld", (long)trackIndex);
+    
+    // Set to anime mode and specify the track
+    [self.soundManager setSoundType:SoundTypeAnime];
+    
+    // Tell the anime audio engine to use the specific track
+    if (self.soundManager.animeAudioEngine) {
+        [self.soundManager.animeAudioEngine selectSpecificTrack:trackIndex];
+    }
+    
+    [self updateMenuStates];
+    [self saveUserPreferences];
 }
 
 @end

@@ -9,6 +9,7 @@
 #import "AudioEngines/Creak/CreakAudioEngine.h"
 #import "AudioEngines/Theremin/ThereminAudioEngine.h"
 #import "AudioEngines/Gachi/GachiAudioEngine.h"
+#import "AudioEngines/Anime/AnimeAudioEngine.h"
 
 @interface SoundManager ()
 @property (nonatomic, assign) NSTimeInterval lastSoundTime;
@@ -70,6 +71,14 @@
         NSLog(@"[SoundManager] WARNING: GachiAudioEngine initialization failed");
     }
     
+    NSLog(@"[SoundManager] Initializing AnimeAudioEngine");
+    self.animeAudioEngine = [[AnimeAudioEngine alloc] init];
+    if (self.animeAudioEngine) {
+        NSLog(@"[SoundManager] AnimeAudioEngine initialized successfully");
+    } else {
+        NSLog(@"[SoundManager] WARNING: AnimeAudioEngine initialization failed");
+    }
+    
     NSLog(@"[SoundManager] Audio engine initialization completed");
 }
 
@@ -122,9 +131,16 @@
             // No need to start engine here - it will be controlled in updateWithLidAngle
             NSLog(@"[SoundManager] Motion-based theremin mode activated");
             break;
-        case SoundTypeGachi:
+        case SoundTypeGachiRandom:
+        case SoundTypeGachigasm:
             if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(startEngine)]) {
                 [self.gachiAudioEngine startEngine];
+            }
+            break;
+        case SoundTypeAnimeRandom:
+        case SoundTypeAnime:
+            if (self.animeAudioEngine && [self.animeAudioEngine respondsToSelector:@selector(startEngine)]) {
+                [self.animeAudioEngine startEngine];
             }
             break;
         case SoundTypeOff:
@@ -162,9 +178,17 @@
             [self handleThereminMotionWithAngle:angle velocity:self.velocity];
             break;
             
-        case SoundTypeGachi:
+        case SoundTypeGachiRandom:
+        case SoundTypeGachigasm:
             if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(updateWithLidAngle:)]) {
                 [self.gachiAudioEngine updateWithLidAngle:angle];
+            }
+            break;
+            
+        case SoundTypeAnimeRandom:
+        case SoundTypeAnime:
+            if (self.animeAudioEngine && [self.animeAudioEngine respondsToSelector:@selector(updateWithLidAngle:)]) {
+                [self.animeAudioEngine updateWithLidAngle:angle];
             }
             break;
             
@@ -185,6 +209,9 @@
     if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(stopEngine)]) {
         [self.gachiAudioEngine stopEngine];
     }
+    if (self.animeAudioEngine && [self.animeAudioEngine respondsToSelector:@selector(stopEngine)]) {
+        [self.animeAudioEngine stopEngine];
+    }
 }
 
 - (NSString *)nameForSoundType:(SoundType)soundType {
@@ -197,8 +224,14 @@
             return @"Theremin Sound";
         case SoundTypeThereminMotion:
             return @"Theremin Motion";
-        case SoundTypeGachi:
-            return @"gachi";
+        case SoundTypeGachiRandom:
+            return @"gachi random";
+        case SoundTypeGachigasm:
+            return @"gachigasm";
+        case SoundTypeAnimeRandom:
+            return @"anime random";
+        case SoundTypeAnime:
+            return @"anime";
         default:
             return @"Unknown";
     }
@@ -210,7 +243,10 @@
         @(SoundTypeCreak),
         @(SoundTypeTheremin),
         @(SoundTypeThereminMotion),
-        @(SoundTypeGachi)
+        @(SoundTypeGachiRandom),
+        @(SoundTypeGachigasm),
+        @(SoundTypeAnimeRandom),
+        @(SoundTypeAnime)
     ];
 }
 

@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface GachiAudioEngine : BaseAudioEngine
 
+// Track selection for gachigasm mode
+- (void)selectSpecificTrack:(NSInteger)trackIndex;
+
 @end
 
 NS_ASSUME_NONNULL_END

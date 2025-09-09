@@ -11,13 +11,17 @@
 @class CreakAudioEngine;
 @class ThereminAudioEngine;
 @class GachiAudioEngine;
+@class AnimeAudioEngine;
 
 typedef NS_ENUM(NSInteger, SoundType) {
     SoundTypeOff = 0,
     SoundTypeCreak,
     SoundTypeTheremin,
     SoundTypeThereminMotion,
-    SoundTypeGachi
+    SoundTypeGachiRandom,
+    SoundTypeGachigasm,
+    SoundTypeAnimeRandom,
+    SoundTypeAnime
 };
 
 @interface SoundManager : NSObject
@@ -33,6 +37,7 @@ typedef NS_ENUM(NSInteger, SoundType) {
 @property (strong, nonatomic) CreakAudioEngine *creakAudioEngine;
 @property (strong, nonatomic) ThereminAudioEngine *thereminAudioEngine;
 @property (strong, nonatomic) GachiAudioEngine *gachiAudioEngine;
+@property (strong, nonatomic) AnimeAudioEngine *animeAudioEngine;
 
 - (instancetype)init;
 - (void)initializeAudioEngines;

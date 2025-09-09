@@ -1,11 +1,11 @@
 //
-//  GachiAudioEngine.m
+//  AnimeAudioEngine.m
 //  LidAngleSensor
 //
-//  Gachi sound mode with MP3 support and audio stretching.
+//  Anime sound mode with MP3 support and random/manual selection.
 //
 
-#import "GachiAudioEngine.h"
+#import "AnimeAudioEngine.h"
 
 // Movement session detection
 static const double kMovementSessionTimeoutSec = 0.15; // Time without movement before considering it a new session
@@ -16,13 +16,16 @@ static const double kFastStopTimeoutMs = 50.0;        // Fast timeout for manual
 static const double kFastStopDecayFactor = 0.5;       // Fast decay rate
 static const double kFastStopAdditionalDecay = 0.8;   // Additional fast decay
 
-// Gachi sound types - fixed set of 4 sounds
-typedef NS_ENUM(NSInteger, GachiSoundType) {
-    GachiSoundAUUUUUUUGH = 0,
-    GachiSoundOOOOOOOOOO = 1,
-    GachiSoundRIP_EARS = 2,
-    GachiSoundVAN_DARKHOLME_WOO = 3,
-    GachiSoundCount = 4
+// Anime sound types - fixed set of 7 sounds
+typedef NS_ENUM(NSInteger, AnimeSoundType) {
+    AnimeSoundAAAAAA = 0,
+    AnimeSoundARA_1 = 1,
+    AnimeSoundARA_2 = 2,
+    AnimeSoundARA_3 = 3,
+    AnimeSoundNYA = 4,
+    AnimeSoundSENPAI = 5,
+    AnimeSoundYAMETE = 6,
+    AnimeSoundCount = 7
 };
 
 // Sound configuration structure
@@ -30,17 +33,20 @@ typedef struct {
     NSString *fileName;
     BOOL shouldLoop;        // YES for looping, NO for stretching
     BOOL shouldStretch;     // YES to stretch with varispeed
-} GachiSoundConfig;
+} AnimeSoundConfig;
 
-// Fixed configuration for all 4 gachi sounds
-static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
-    {@"AUUUUUUUGH", YES, NO},           // Loop, don't stretch
-    {@"OOOOOOOOOOO", YES, NO},          // Loop, don't stretch  
-    {@"RIP_EARS", YES, NO},             // Loop, don't stretch
-    {@"VAN_DARKHOLME_WOO", YES, NO}     // Loop, don't stretch
+// Fixed configuration for all 7 anime sounds
+static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
+    {@"aaaaaa", YES, NO},           // Loop, don't stretch
+    {@"ara_1", YES, NO},            // Loop, don't stretch  
+    {@"ara_2", YES, NO},            // Loop, don't stretch
+    {@"ara_3", YES, NO},            // Loop, don't stretch
+    {@"nya", YES, NO},              // Loop, don't stretch
+    {@"senpai", YES, NO},           // Loop, don't stretch
+    {@"yamete", YES, NO}            // Loop, don't stretch
 };
 
-@interface GachiAudioEngine ()
+@interface AnimeAudioEngine ()
 
 // Audio nodes - we need separate nodes for each format to avoid reconnection issues
 @property (nonatomic, strong) NSMutableArray<AVAudioPlayerNode *> *playerNodes;
@@ -48,7 +54,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
 @property (nonatomic, strong) AVAudioMixerNode *mixerNode;
 
 // Audio files
-@property (nonatomic, strong) NSArray<AVAudioFile *> *gachiFiles;
+@property (nonatomic, strong) NSArray<AVAudioFile *> *animeFiles;
 @property (nonatomic, assign) NSInteger currentSoundIndex;
 
 // Track selection state
@@ -72,7 +78,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
 
 @end
 
-@implementation GachiAudioEngine
+@implementation AnimeAudioEngine
 
 + (void)initialize {
     // No longer needed - using fixed configuration structure
@@ -102,7 +108,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     
     self = [super init];
     if (self) {
-        NSLog(@"[GachiAudioEngine] GachiAudioEngine initialized successfully");
+        NSLog(@"[AnimeAudioEngine] AnimeAudioEngine initialized successfully");
     }
     return self;
 }
@@ -122,8 +128,8 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     NSBundle *bundle = [NSBundle mainBundle];
     NSMutableArray<AVAudioFile *> *files = [[NSMutableArray alloc] init];
     
-    for (int i = 0; i < GachiSoundCount; i++) {
-        NSString *fileName = kGachiSoundConfigs[i].fileName;
+    for (int i = 0; i < AnimeSoundCount; i++) {
+        NSString *fileName = kAnimeSoundConfigs[i].fileName;
         
         // Try MP3 first (files are copied directly to Resources folder)
         NSString *filePath = [bundle pathForResource:fileName ofType:@"mp3"];
@@ -133,7 +139,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         }
         
         if (!filePath) {
-            NSLog(@"[GachiAudioEngine] Could not find %@.mp3 or %@.wav in bundle resources", fileName, fileName);
+            NSLog(@"[AnimeAudioEngine] Could not find %@.mp3 or %@.wav in bundle resources", fileName, fileName);
             continue;
         }
         
@@ -142,86 +148,86 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         AVAudioFile *audioFile = [[AVAudioFile alloc] initForReading:fileURL error:&error];
         
         if (!audioFile) {
-            NSLog(@"[GachiAudioEngine] Failed to load %@: %@", fileName, error.localizedDescription);
+            NSLog(@"[AnimeAudioEngine] Failed to load %@: %@", fileName, error.localizedDescription);
             continue;
         }
         
         [files addObject:audioFile];
-        NSLog(@"[GachiAudioEngine] Successfully loaded %@ (length: %lld frames, format: %@)", 
+        NSLog(@"[AnimeAudioEngine] Successfully loaded %@ (length: %lld frames, format: %@)", 
               fileName, audioFile.length, audioFile.processingFormat);
     }
     
     if (files.count == 0) {
-        NSLog(@"[GachiAudioEngine] No gachi sound files could be loaded");
+        NSLog(@"[AnimeAudioEngine] No anime sound files could be loaded");
         return NO;
     }
     
-    self.gachiFiles = [files copy];
-    NSLog(@"[GachiAudioEngine] Loaded %lu gachi sound files", (unsigned long)self.gachiFiles.count);
+    self.animeFiles = [files copy];
+    NSLog(@"[AnimeAudioEngine] Loaded %lu anime sound files", (unsigned long)self.animeFiles.count);
     
     // Create separate audio nodes for each file to avoid format switching issues
     [self setupAudioNodesForFiles];
     
     // Select initial random sound but don't start playing yet
-    NSLog(@"[GachiAudioEngine] About to select initial random sound, gachiFiles.count: %lu", (unsigned long)self.gachiFiles.count);
+    NSLog(@"[AnimeAudioEngine] About to select initial random sound, animeFiles.count: %lu", (unsigned long)self.animeFiles.count);
     [self selectNewRandomSound];
-    NSLog(@"[GachiAudioEngine] After selectNewRandomSound, currentSoundIndex: %ld", (long)self.currentSoundIndex);
+    NSLog(@"[AnimeAudioEngine] After selectNewRandomSound, currentSoundIndex: %ld", (long)self.currentSoundIndex);
     
     return YES;
 }
 
 - (void)setupAudioNodesForFiles {
-    NSLog(@"[GachiAudioEngine] setupAudioNodesForFiles called - gachiFiles.count: %lu, playerNodes.count: %lu, varispeadUnits.count: %lu", 
-          (unsigned long)self.gachiFiles.count, (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
+    NSLog(@"[AnimeAudioEngine] setupAudioNodesForFiles called - animeFiles.count: %lu, playerNodes.count: %lu, varispeadUnits.count: %lu", 
+          (unsigned long)self.animeFiles.count, (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
     
     if (!self.audioEngine) {
-        NSLog(@"[GachiAudioEngine] ERROR: audioEngine is nil in setupAudioNodesForFiles");
+        NSLog(@"[AnimeAudioEngine] ERROR: audioEngine is nil in setupAudioNodesForFiles");
         return;
     }
     
     if (!self.mixerNode) {
-        NSLog(@"[GachiAudioEngine] ERROR: mixerNode is nil in setupAudioNodesForFiles");
+        NSLog(@"[AnimeAudioEngine] ERROR: mixerNode is nil in setupAudioNodesForFiles");
         return;
     }
     
     // Create a player node and varispeed unit for each audio file
-    for (NSUInteger i = 0; i < self.gachiFiles.count; i++) {
-        AVAudioFile *file = self.gachiFiles[i];
+    for (NSUInteger i = 0; i < self.animeFiles.count; i++) {
+        AVAudioFile *file = self.animeFiles[i];
         
         // Create nodes
         AVAudioPlayerNode *playerNode = [[AVAudioPlayerNode alloc] init];
         AVAudioUnitVarispeed *varispeadUnit = [[AVAudioUnitVarispeed alloc] init];
         
-        NSLog(@"[GachiAudioEngine] Created nodes for file %lu: playerNode=%@, varispeadUnit=%@", i, playerNode, varispeadUnit);
+        NSLog(@"[AnimeAudioEngine] Created nodes for file %lu: playerNode=%@, varispeadUnit=%@", i, playerNode, varispeadUnit);
         
         // Attach to engine
         [self.audioEngine attachNode:playerNode];
         [self.audioEngine attachNode:varispeadUnit];
         
-        NSLog(@"[GachiAudioEngine] Attached nodes to engine for file %lu", i);
+        NSLog(@"[AnimeAudioEngine] Attached nodes to engine for file %lu", i);
         
         // Connect: Player -> Varispeed -> Mixer
         AVAudioFormat *fileFormat = file.processingFormat;
         [self.audioEngine connect:playerNode to:varispeadUnit format:fileFormat];
         [self.audioEngine connect:varispeadUnit to:self.mixerNode format:fileFormat];
         
-        NSLog(@"[GachiAudioEngine] Connected nodes for file %lu with format: %@", i, fileFormat);
+        NSLog(@"[AnimeAudioEngine] Connected nodes for file %lu with format: %@", i, fileFormat);
         
         // Store nodes
         [self.playerNodes addObject:playerNode];
         [self.varispeadUnits addObject:varispeadUnit];
         
-        NSLog(@"[GachiAudioEngine] Added nodes to arrays for file %lu - playerNodes.count now: %lu, varispeadUnits.count now: %lu", 
+        NSLog(@"[AnimeAudioEngine] Added nodes to arrays for file %lu - playerNodes.count now: %lu, varispeadUnits.count now: %lu", 
               i, (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
     }
     
-    NSLog(@"[GachiAudioEngine] setupAudioNodesForFiles completed - final counts: playerNodes=%lu, varispeadUnits=%lu", 
+    NSLog(@"[AnimeAudioEngine] setupAudioNodesForFiles completed - final counts: playerNodes=%lu, varispeadUnits=%lu", 
           (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
 }
 
 - (void)startAudioPlayback {
     // DON'T start playing immediately - wait for movement
-    NSLog(@"[GachiAudioEngine] Started gachi engine (waiting for movement)");
+    NSLog(@"[AnimeAudioEngine] Started anime engine (waiting for movement)");
 }
 
 - (void)updateAudioParametersWithVelocity:(double)velocity {
@@ -244,7 +250,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     if (speed > 1.0) { // Using same deadzone as base class
         // Cancel fade-out only if movement is substantial (not just sensor noise)
         if (self.isFadingOut && speed > 5.0) { // Require stronger movement to cancel fade-out
-            NSLog(@"[GachiAudioEngine] Substantial movement detected (%.1f) - canceling fade-out", speed);
+            NSLog(@"[AnimeAudioEngine] Substantial movement detected (%.1f) - canceling fade-out", speed);
             self.isFadingOut = NO;
         }
         
@@ -255,7 +261,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
             double timeSinceLastSessionEnd = currentTime - self.lastSessionEndTime;
             
             if (self.lastSessionEndTime == 0.0 || timeSinceLastSessionEnd > 0.3) { // Increased dead time to 0.3 seconds
-                NSLog(@"[GachiAudioEngine] Starting new movement session");
+                NSLog(@"[AnimeAudioEngine] Starting new movement session");
                 self.isInMovementSession = YES;
                 
                 // Initialize lastSignificantMovementTime for new session
@@ -264,7 +270,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
                 // Always switch to new random sound for new movement session
                 [self switchToNewRandomSoundIfNeeded];
             } else {
-                NSLog(@"[GachiAudioEngine] Ignoring movement - too soon after last session (%.3f sec)", timeSinceLastSessionEnd);
+                NSLog(@"[AnimeAudioEngine] Ignoring movement - too soon after last session (%.3f sec)", timeSinceLastSessionEnd);
             }
         }
     }
@@ -273,7 +279,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     double currentTime = CACurrentMediaTime();
     double timeSinceSignificantMovement = currentTime - self.lastSignificantMovementTime;
     if (self.isInMovementSession && timeSinceSignificantMovement > kMovementSessionTimeoutSec) {
-        NSLog(@"[GachiAudioEngine] Movement session ended - starting fade-out");
+        NSLog(@"[AnimeAudioEngine] Movement session ended - starting fade-out");
         self.isInMovementSession = NO;
         self.lastSessionEndTime = currentTime; // Record when session ended
         
@@ -281,7 +287,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         [self startFadeOut];
     }
     
-    // For gachi mode: simple on/off based on deadzone, no volume modulation
+    // For anime mode: simple on/off based on deadzone, no volume modulation
     double gain;
     if (speed < 1.0) { // Below deadzone: no sound
         gain = 0.0;
@@ -317,7 +323,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         
         // Start playing if not already started
         if (!self.hasStartedPlaying && self.isEngineRunning) {
-            [self startGachiLoop];
+            [self startAnimeLoop];
         }
     } else {
         // No movement - apply fast decay
@@ -329,7 +335,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         speed *= kFastStopDecayFactor;
     }
     
-    // For gachi mode: simple on/off based on deadzone, no volume modulation
+    // For anime mode: simple on/off based on deadzone, no volume modulation
     double gain;
     if (speed < 1.0) { // Below deadzone: no sound
         gain = 0.0;
@@ -357,7 +363,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
         return;
     }
     
-    // Apply ramped values to current audio nodes (no volume multiplier for gachi mode)
+    // Apply ramped values to current audio nodes (no volume multiplier for anime mode)
     AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
     AVAudioUnitVarispeed *currentVarispeadUnit = self.varispeadUnits[self.currentSoundIndex];
     
@@ -368,31 +374,31 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
 #pragma mark - Sound Selection and Playback
 
 - (void)selectNewRandomSound {
-    if (self.gachiFiles.count == 0) {
+    if (self.animeFiles.count == 0) {
         return;
     }
     
     // Select a random sound
-    NSInteger newIndex = arc4random_uniform((uint32_t)self.gachiFiles.count);
+    NSInteger newIndex = arc4random_uniform((uint32_t)self.animeFiles.count);
     self.currentSoundIndex = newIndex;
     
-    NSString *fileName = kGachiSoundConfigs[newIndex].fileName;
-    NSLog(@"[GachiAudioEngine] Selected random sound: %@ (index %ld)", fileName, (long)newIndex);
+    NSString *fileName = kAnimeSoundConfigs[newIndex].fileName;
+    NSLog(@"[AnimeAudioEngine] Selected random sound: %@ (index %ld)", fileName, (long)newIndex);
 }
 
-- (void)startGachiLoop {
-    NSLog(@"[GachiAudioEngine] startGachiLoop called - currentSoundIndex: %ld, engineRunning: %d, gachiFiles.count: %lu", 
-          (long)self.currentSoundIndex, self.isEngineRunning, (unsigned long)self.gachiFiles.count);
+- (void)startAnimeLoop {
+    NSLog(@"[AnimeAudioEngine] startAnimeLoop called - currentSoundIndex: %ld, engineRunning: %d, animeFiles.count: %lu", 
+          (long)self.currentSoundIndex, self.isEngineRunning, (unsigned long)self.animeFiles.count);
     
     if (self.currentSoundIndex < 0 || !self.isEngineRunning) {
-        NSLog(@"[GachiAudioEngine] Cannot start loop - currentSoundIndex: %ld, engineRunning: %d", 
+        NSLog(@"[AnimeAudioEngine] Cannot start loop - currentSoundIndex: %ld, engineRunning: %d", 
               (long)self.currentSoundIndex, self.isEngineRunning);
         
         // Try to fix the issue by selecting a new random sound if we have files
-        if (self.gachiFiles.count > 0 && self.currentSoundIndex < 0) {
-            NSLog(@"[GachiAudioEngine] Attempting to fix currentSoundIndex by selecting new random sound");
+        if (self.animeFiles.count > 0 && self.currentSoundIndex < 0) {
+            NSLog(@"[AnimeAudioEngine] Attempting to fix currentSoundIndex by selecting new random sound");
             [self selectNewRandomSound];
-            NSLog(@"[GachiAudioEngine] After fix attempt, currentSoundIndex: %ld", (long)self.currentSoundIndex);
+            NSLog(@"[AnimeAudioEngine] After fix attempt, currentSoundIndex: %ld", (long)self.currentSoundIndex);
         }
         
         if (self.currentSoundIndex < 0 || !self.isEngineRunning) {
@@ -401,20 +407,20 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     }
     
     // Additional safety checks
-    if (self.currentSoundIndex >= (NSInteger)self.gachiFiles.count || 
+    if (self.currentSoundIndex >= (NSInteger)self.animeFiles.count || 
         self.currentSoundIndex >= (NSInteger)self.playerNodes.count ||
         self.currentSoundIndex >= (NSInteger)self.varispeadUnits.count) {
-        NSLog(@"[GachiAudioEngine] Invalid currentSoundIndex: %ld, arrays sizes: gachiFiles=%lu, playerNodes=%lu, varispeadUnits=%lu", 
-              (long)self.currentSoundIndex, (unsigned long)self.gachiFiles.count, 
+        NSLog(@"[AnimeAudioEngine] Invalid currentSoundIndex: %ld, arrays sizes: animeFiles=%lu, playerNodes=%lu, varispeadUnits=%lu", 
+              (long)self.currentSoundIndex, (unsigned long)self.animeFiles.count, 
               (unsigned long)self.playerNodes.count, (unsigned long)self.varispeadUnits.count);
         return;
     }
     
-    AVAudioFile *currentFile = self.gachiFiles[self.currentSoundIndex];
+    AVAudioFile *currentFile = self.animeFiles[self.currentSoundIndex];
     AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
     
     // Get sound configuration for current sound
-    GachiSoundConfig config = kGachiSoundConfigs[self.currentSoundIndex];
+    AnimeSoundConfig config = kAnimeSoundConfigs[self.currentSoundIndex];
     
     // Stop any current playback from all nodes
     for (AVAudioPlayerNode *node in self.playerNodes) {
@@ -423,26 +429,27 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     
     // Reset file position to beginning
     currentFile.framePosition = 0;
-
+    
+    // Schedule the anime sound based on its configuration
     AVAudioFrameCount frameCount = (AVAudioFrameCount)currentFile.length;
     AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:currentFile.processingFormat
                                                              frameCapacity:frameCount];
     
     if (!buffer) {
-        NSLog(@"[GachiAudioEngine] Failed to create buffer for %@ frames", @(frameCount));
+        NSLog(@"[AnimeAudioEngine] Failed to create buffer for %@ frames", @(frameCount));
         return;
     }
     
     NSError *error;
     if (![currentFile readIntoBuffer:buffer error:&error]) {
-        NSLog(@"[GachiAudioEngine] Failed to read gachi sound into buffer: %@", error.localizedDescription);
+        NSLog(@"[AnimeAudioEngine] Failed to read anime sound into buffer: %@", error.localizedDescription);
         return;
     }
     
-    NSLog(@"[GachiAudioEngine] Buffer created successfully: %@ frames", @(buffer.frameLength));
+    NSLog(@"[AnimeAudioEngine] Buffer created successfully: %@ frames", @(buffer.frameLength));
     
     // All sounds now use simple looping behavior
-    NSLog(@"[GachiAudioEngine] Starting looping playback for %@", config.fileName);
+    NSLog(@"[AnimeAudioEngine] Starting looping playback for %@", config.fileName);
     [currentPlayerNode scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferLoops completionHandler:nil];
     
     [currentPlayerNode play];
@@ -451,9 +458,8 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     currentPlayerNode.volume = 0.0;
     self.hasStartedPlaying = YES;
     
-    NSLog(@"[GachiAudioEngine] Started playing gachi sound loop");
+    NSLog(@"[AnimeAudioEngine] Started playing anime sound loop");
 }
-
 
 - (void)switchToNewRandomSoundIfNeeded {
     // This method switches to a new random sound
@@ -465,20 +471,20 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     
     // Only select a new random sound if no manual track selection has been made
     if (!self.isManualTrackSelected) {
-        NSLog(@"[GachiAudioEngine] Switching to new random sound for new movement session");
+        NSLog(@"[AnimeAudioEngine] Switching to new random sound for new movement session");
         
         // Select new random sound
         [self selectNewRandomSound];
     } else {
-        NSLog(@"[GachiAudioEngine] Using manually selected track %ld for new movement session", (long)self.currentSoundIndex);
+        NSLog(@"[AnimeAudioEngine] Using manually selected track %ld for new movement session", (long)self.currentSoundIndex);
     }
     
     // Start the loop with current sound (either random or manually selected)
-    [self startGachiLoop];
+    [self startAnimeLoop];
 }
 
 - (void)stopAllAudioPlayback {
-    NSLog(@"[GachiAudioEngine] Stopping all audio playback");
+    NSLog(@"[AnimeAudioEngine] Stopping all audio playback");
     
     // Stop all player nodes
     for (AVAudioPlayerNode *node in self.playerNodes) {
@@ -495,7 +501,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     self.fadeOutStartTime = 0.0;
     self.fadeOutStartGain = 0.0;
     
-    NSLog(@"[GachiAudioEngine] All audio playback stopped");
+    NSLog(@"[AnimeAudioEngine] All audio playback stopped");
 }
 
 #pragma mark - Fade-out Management
@@ -510,7 +516,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     self.fadeOutStartTime = currentTime;
     self.fadeOutStartGain = self.currentGain; // Store current gain level
     
-    NSLog(@"[GachiAudioEngine] Started fade-out from gain %.2f", self.fadeOutStartGain);
+    NSLog(@"[AnimeAudioEngine] Started fade-out from gain %.2f", self.fadeOutStartGain);
 }
 
 - (void)updateFadeOut {
@@ -523,7 +529,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     
     if (fadeProgress >= 1.0) {
         // Fade-out complete
-        NSLog(@"[GachiAudioEngine] Fade-out complete - stopping playback");
+        NSLog(@"[AnimeAudioEngine] Fade-out complete - stopping playback");
         [self stopAllAudioPlayback];
         self.isFadingOut = NO;
         return;
@@ -577,7 +583,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     self.isDecelerating = (recent < middle) && (middle < older) && (older - recent > 2.0);
     
     if (self.isDecelerating && !wasDecelerating) {
-        NSLog(@"[GachiAudioEngine] Deceleration detected: %.1f -> %.1f -> %.1f", older, middle, recent);
+        NSLog(@"[AnimeAudioEngine] Deceleration detected: %.1f -> %.1f -> %.1f", older, middle, recent);
         
         // Start early countdown when deceleration is detected
         if (self.isInMovementSession && recent > 1.0) {
@@ -589,7 +595,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
             // Only adjust if it would make the timeout shorter
             if (adjustedLastMovementTime > self.lastSignificantMovementTime) {
                 self.lastSignificantMovementTime = adjustedLastMovementTime;
-                NSLog(@"[GachiAudioEngine] Applied early timeout due to deceleration");
+                NSLog(@"[AnimeAudioEngine] Applied early timeout due to deceleration");
             }
         }
     }
@@ -598,12 +604,12 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
 #pragma mark - Track Selection
 
 - (void)selectSpecificTrack:(NSInteger)trackIndex {
-    if (trackIndex < 0 || trackIndex >= GachiSoundCount) {
-        NSLog(@"[GachiAudioEngine] Invalid track index: %ld", (long)trackIndex);
+    if (trackIndex < 0 || trackIndex >= AnimeSoundCount) {
+        NSLog(@"[AnimeAudioEngine] Invalid track index: %ld", (long)trackIndex);
         return;
     }
     
-    NSLog(@"[GachiAudioEngine] Selecting specific track: %ld (%@)", (long)trackIndex, kGachiSoundConfigs[trackIndex].fileName);
+    NSLog(@"[AnimeAudioEngine] Selecting specific track: %ld (%@)", (long)trackIndex, kAnimeSoundConfigs[trackIndex].fileName);
     
     // Set the current sound index to the specified track
     self.currentSoundIndex = trackIndex;
@@ -613,7 +619,7 @@ static const GachiSoundConfig kGachiSoundConfigs[GachiSoundCount] = {
     
     // If we're currently playing, switch to the new track immediately
     if (self.hasStartedPlaying && self.isEngineRunning) {
-        [self startGachiLoop];
+        [self startAnimeLoop];
     }
 }
 
