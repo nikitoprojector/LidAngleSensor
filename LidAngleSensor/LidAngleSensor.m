@@ -9,13 +9,33 @@
 
 @interface LidAngleSensor ()
 @property (nonatomic, assign) IOHIDDeviceRef hidDevice;
+@property (nonatomic, assign) uint8_t *reportBuffer; // Pre-allocated buffer for performance
 @end
+
+// Global function to get current lid angle for initialization
+double getCurrentLidAngle(void) {
+    static LidAngleSensor *globalSensor = nil;
+    static dispatch_once_t onceToken;
+    
+    dispatch_once(&onceToken, ^{
+        globalSensor = [[LidAngleSensor alloc] init];
+    });
+    
+    if (globalSensor && [globalSensor isAvailable]) {
+        return [globalSensor lidAngle];
+    }
+    
+    return -1.0; // Return -1 if sensor is not available
+}
 
 @implementation LidAngleSensor
 
 - (instancetype)init {
     self = [super init];
     if (self) {
+        // Pre-allocate report buffer for performance
+        _reportBuffer = malloc(8 * sizeof(uint8_t));
+        
         _hidDevice = [self findLidAngleSensor];
         if (_hidDevice) {
             IOHIDDeviceOpen(_hidDevice, kIOHIDOptionsTypeNone);
@@ -29,6 +49,10 @@
 
 - (void)dealloc {
     [self stopLidAngleUpdates];
+    if (_reportBuffer) {
+        free(_reportBuffer);
+        _reportBuffer = NULL;
+    }
 }
 
 - (BOOL)isAvailable {
@@ -109,25 +133,21 @@
 }
 
 - (double)lidAngle {
-    if (!_hidDevice) {
-        return -2.0;  // Device not available
-    }
-    
+    // Fast path - device is already validated during init
     // Read lid angle using discovered parameters:
     // Feature Report Type 2, Report ID 1, returns 3 bytes with 16-bit angle in centidegrees
-    uint8_t report[8] = {0};
-    CFIndex reportLength = sizeof(report);
+    CFIndex reportLength = 8;
     
     IOReturn result = IOHIDDeviceGetReport(_hidDevice, 
                                           kIOHIDReportTypeFeature,  // Type 2
                                           1,                        // Report ID 1
-                                          report, 
+                                          _reportBuffer, 
                                           &reportLength);
     
     if (result == kIOReturnSuccess && reportLength >= 3) {
         // Data format: [report_id, angle_low, angle_high]
         // Parse the 16-bit value from bytes 1-2 (skipping report ID)
-        uint16_t rawValue = (report[2] << 8) | report[1];  // High byte, low byte
+        uint16_t rawValue = (_reportBuffer[2] << 8) | _reportBuffer[1];  // High byte, low byte
         double angle = (double)rawValue;  // Raw value is already in degrees
         
         return angle;

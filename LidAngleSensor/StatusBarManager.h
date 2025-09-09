@@ -23,9 +23,12 @@
 @property (strong, nonatomic) NSMenuItem *angleMenuItem;
 @property (strong, nonatomic) NSMenuItem *statusMenuItem;
 @property (strong, nonatomic) NSMenuItem *audioToggleMenuItem;
-@property (strong, nonatomic) NSMenuItem *volumeMenuItem;
-@property (strong, nonatomic) NSSlider *volumeSlider;
 @property (strong, nonatomic) NSMutableArray<NSMenuItem *> *soundModeMenuItems;
+
+// Submenu items for track selection
+@property (strong, nonatomic) NSMenu *gachigasmSubmenu;
+@property (strong, nonatomic) NSMenu *animeSubmenu;
+@property (strong, nonatomic) NSMenu *systemSoundsSubmenu;
 
 - (instancetype)init;
 - (void)setupStatusBar;
@@ -41,5 +44,10 @@
 - (void)selectOffMode:(id)sender;
 - (void)showAbout:(id)sender;
 - (void)quitApplication:(id)sender;
+
+// Track selection actions
+- (void)selectGachiTrack:(id)sender;
+- (void)selectAnimeTrack:(id)sender;
+- (void)selectSystemSoundsTrack:(id)sender;
 
 @end

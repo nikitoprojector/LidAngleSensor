@@ -6,9 +6,11 @@
 //
 
 #import "SoundManager.h"
-#import "CreakAudioEngine.h"
-#import "ThereminAudioEngine.h"
-#import "GachiAudioEngine.h"
+#import "AudioEngines/Creak/CreakAudioEngine.h"
+#import "AudioEngines/Theremin/ThereminAudioEngine.h"
+#import "AudioEngines/Gachi/GachiAudioEngine.h"
+#import "AudioEngines/Anime/AnimeAudioEngine.h"
+#import "AudioEngines/SystemSounds/SystemSoundsAudioEngine.h"
 
 @interface SoundManager ()
 @property (nonatomic, assign) NSTimeInterval lastSoundTime;
@@ -31,6 +33,9 @@
         NSLog(@"[SoundManager] Initializing audio engines");
         [self initializeAudioEngines];
         
+        // Initialize with current lid angle to prevent false motion detection
+        [self initializeWithCurrentAngle];
+        
         NSLog(@"[SoundManager] SoundManager initialized successfully");
     } else {
         NSLog(@"[SoundManager] ERROR: Failed to initialize super");
@@ -40,6 +45,20 @@
 
 - (void)dealloc {
     [self stopAllAudio];
+}
+
+- (void)initializeWithCurrentAngle {
+    // Get current lid angle to initialize baseline and prevent false motion detection
+    extern double getCurrentLidAngle(void);
+    double currentAngle = getCurrentLidAngle();
+    
+    if (currentAngle >= 0) {
+        self.currentAngle = currentAngle;
+        self.previousAngle = currentAngle;
+        NSLog(@"[SoundManager] Initialized with current lid angle: %.2f degrees", currentAngle);
+    } else {
+        NSLog(@"[SoundManager] Could not get current lid angle, using default initialization");
+    }
 }
 
 - (void)initializeAudioEngines {
@@ -70,6 +89,22 @@
         NSLog(@"[SoundManager] WARNING: GachiAudioEngine initialization failed");
     }
     
+    NSLog(@"[SoundManager] Initializing AnimeAudioEngine");
+    self.animeAudioEngine = [[AnimeAudioEngine alloc] init];
+    if (self.animeAudioEngine) {
+        NSLog(@"[SoundManager] AnimeAudioEngine initialized successfully");
+    } else {
+        NSLog(@"[SoundManager] WARNING: AnimeAudioEngine initialization failed");
+    }
+    
+    NSLog(@"[SoundManager] Initializing SystemSoundsAudioEngine");
+    self.systemSoundsAudioEngine = [[SystemSoundsAudioEngine alloc] init];
+    if (self.systemSoundsAudioEngine) {
+        NSLog(@"[SoundManager] SystemSoundsAudioEngine initialized successfully");
+    } else {
+        NSLog(@"[SoundManager] WARNING: SystemSoundsAudioEngine initialization failed");
+    }
+    
     NSLog(@"[SoundManager] Audio engine initialization completed");
 }
 
@@ -81,6 +116,17 @@
     
     // Stop current audio
     [self stopAllAudio];
+    
+    // Reset engines to random mode when switching to random modes
+    if (soundType == SoundTypeGachiRandom && self.gachiAudioEngine) {
+        [self.gachiAudioEngine resetToRandomMode];
+    }
+    if (soundType == SoundTypeAnimeRandom && self.animeAudioEngine) {
+        [self.animeAudioEngine resetToRandomMode];
+    }
+    if (soundType == SoundTypeSystemSoundsRandom && self.systemSoundsAudioEngine) {
+        [self.systemSoundsAudioEngine resetToRandomMode];
+    }
     
     // Update sound type
     self.currentSoundType = soundType;
@@ -106,14 +152,15 @@
 }
 
 - (void)startCurrentAudio {
+    // Direct calls without respondsToSelector checks for performance
     switch (self.currentSoundType) {
         case SoundTypeCreak:
-            if (self.creakAudioEngine && [self.creakAudioEngine respondsToSelector:@selector(startEngine)]) {
+            if (self.creakAudioEngine) {
                 [self.creakAudioEngine startEngine];
             }
             break;
         case SoundTypeTheremin:
-            if (self.thereminAudioEngine && [self.thereminAudioEngine respondsToSelector:@selector(startEngine)]) {
+            if (self.thereminAudioEngine) {
                 [self.thereminAudioEngine startEngine];
             }
             break;
@@ -122,9 +169,40 @@
             // No need to start engine here - it will be controlled in updateWithLidAngle
             NSLog(@"[SoundManager] Motion-based theremin mode activated");
             break;
-        case SoundTypeGachi:
-            if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(startEngine)]) {
+        case SoundTypeGachiRandom:
+            if (self.gachiAudioEngine) {
                 [self.gachiAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started gachi random mode");
+            }
+            break;
+        case SoundTypeGachigasm:
+            if (self.gachiAudioEngine) {
+                [self.gachiAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started gachigasm mode");
+            }
+            break;
+        case SoundTypeAnimeRandom:
+            if (self.animeAudioEngine) {
+                [self.animeAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started anime random mode");
+            }
+            break;
+        case SoundTypeAnime:
+            if (self.animeAudioEngine) {
+                [self.animeAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started anime mode");
+            }
+            break;
+        case SoundTypeSystemSoundsRandom:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started system sounds random mode");
+            }
+            break;
+        case SoundTypeSystemSounds:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started system sounds mode");
             }
             break;
         case SoundTypeOff:
@@ -134,9 +212,9 @@
 }
 
 - (void)updateWithLidAngle:(double)angle {
-    // Calculate velocity
-    double deltaAngle = angle - self.previousAngle;
-    self.velocity = fabs(deltaAngle) * 60.0; // Convert to degrees per second (assuming 60Hz updates)
+    // Calculate velocity - optimized for 120Hz updates
+    double deltaAngle = angle - self.currentAngle;
+    self.velocity = fabs(deltaAngle) * 120.0; // Convert to degrees per second (120Hz updates)
     
     self.previousAngle = self.currentAngle;
     self.currentAngle = angle;
@@ -145,15 +223,16 @@
         return;
     }
     
+    // Direct calls without respondsToSelector checks for performance
     switch (self.currentSoundType) {
         case SoundTypeCreak:
-            if (self.creakAudioEngine && [self.creakAudioEngine respondsToSelector:@selector(updateWithLidAngle:)]) {
+            if (self.creakAudioEngine) {
                 [self.creakAudioEngine updateWithLidAngle:angle];
             }
             break;
             
         case SoundTypeTheremin:
-            if (self.thereminAudioEngine && [self.thereminAudioEngine respondsToSelector:@selector(updateWithLidAngle:)]) {
+            if (self.thereminAudioEngine) {
                 [self.thereminAudioEngine updateWithLidAngle:angle];
             }
             break;
@@ -162,9 +241,24 @@
             [self handleThereminMotionWithAngle:angle velocity:self.velocity];
             break;
             
-        case SoundTypeGachi:
-            if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(updateWithLidAngle:)]) {
+        case SoundTypeGachiRandom:
+        case SoundTypeGachigasm:
+            if (self.gachiAudioEngine) {
                 [self.gachiAudioEngine updateWithLidAngle:angle];
+            }
+            break;
+            
+        case SoundTypeAnimeRandom:
+        case SoundTypeAnime:
+            if (self.animeAudioEngine) {
+                [self.animeAudioEngine updateWithLidAngle:angle];
+            }
+            break;
+            
+        case SoundTypeSystemSoundsRandom:
+        case SoundTypeSystemSounds:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine updateWithLidAngle:angle];
             }
             break;
             
@@ -175,15 +269,21 @@
 }
 
 - (void)stopAllAudio {
-    // Stop audio engines
-    if (self.creakAudioEngine && [self.creakAudioEngine respondsToSelector:@selector(stopEngine)]) {
+    // Direct calls without respondsToSelector checks for performance
+    if (self.creakAudioEngine) {
         [self.creakAudioEngine stopEngine];
     }
-    if (self.thereminAudioEngine && [self.thereminAudioEngine respondsToSelector:@selector(stopEngine)]) {
+    if (self.thereminAudioEngine) {
         [self.thereminAudioEngine stopEngine];
     }
-    if (self.gachiAudioEngine && [self.gachiAudioEngine respondsToSelector:@selector(stopEngine)]) {
+    if (self.gachiAudioEngine) {
         [self.gachiAudioEngine stopEngine];
+    }
+    if (self.animeAudioEngine) {
+        [self.animeAudioEngine stopEngine];
+    }
+    if (self.systemSoundsAudioEngine) {
+        [self.systemSoundsAudioEngine stopEngine];
     }
 }
 
@@ -197,8 +297,18 @@
             return @"Theremin Sound";
         case SoundTypeThereminMotion:
             return @"Theremin Motion";
-        case SoundTypeGachi:
-            return @"gachi";
+        case SoundTypeGachiRandom:
+            return @"gachi random";
+        case SoundTypeGachigasm:
+            return @"gachigasm";
+        case SoundTypeAnimeRandom:
+            return @"anime random";
+        case SoundTypeAnime:
+            return @"anime";
+        case SoundTypeSystemSoundsRandom:
+            return @"system sounds random";
+        case SoundTypeSystemSounds:
+            return @"system sounds";
         default:
             return @"Unknown";
     }
@@ -210,7 +320,12 @@
         @(SoundTypeCreak),
         @(SoundTypeTheremin),
         @(SoundTypeThereminMotion),
-        @(SoundTypeGachi)
+        @(SoundTypeGachiRandom),
+        @(SoundTypeGachigasm),
+        @(SoundTypeAnimeRandom),
+        @(SoundTypeAnime),
+        @(SoundTypeSystemSoundsRandom),
+        @(SoundTypeSystemSounds)
     ];
 }
 
@@ -265,15 +380,16 @@
 
 - (void)handleThereminMotionWithAngle:(double)angle velocity:(double)velocity {
     // Define motion thresholds - sound plays only when there's significant movement
-    static const double kVelocityThreshold = 0.5; // degrees per second - minimum velocity
-    static const double kAngleChangeThreshold = 2.0; // degrees - minimum angle change to consider as intentional movement
+    // Increased thresholds to prevent false triggers during startup
+    static const double kVelocityThreshold = 5.0; // degrees per second - minimum velocity (increased from 0.5)
+    static const double kAngleChangeThreshold = 5.0; // degrees - minimum angle change to consider as intentional movement (increased from 2.0)
     static BOOL isEngineRunning = NO;
     static NSTimeInterval lastEngineStartTime = 0.0;
     static NSTimeInterval lastMotionTime = 0.0;
     static double lastSignificantAngle = 0.0; // Track angle for significant change detection
     static BOOL hasSignificantAngleChange = NO;
     static const NSTimeInterval kMinEngineRunTime = 0.3; // Minimum time engine should run (300ms)
-    static const NSTimeInterval kMotionTimeout = 0.5; // Time to wait after motion stops before considering stopping (500ms)
+    static const NSTimeInterval kMotionTimeout = 0.15; // Time to wait after motion stops before considering stopping (150ms)
     
     if (self.thereminAudioEngine == nil) {
         NSLog(@"[SoundManager] WARNING: ThereminAudioEngine is nil in motion mode");
