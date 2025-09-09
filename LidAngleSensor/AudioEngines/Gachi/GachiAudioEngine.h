@@ -14,6 +14,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Track selection for gachigasm mode
 - (void)selectSpecificTrack:(NSInteger)trackIndex;
 
+// Reset to random mode (clears manual track selection)
+- (void)resetToRandomMode;
+
 @end
 
 NS_ASSUME_NONNULL_END

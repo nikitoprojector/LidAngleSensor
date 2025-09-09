@@ -34,10 +34,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)loadAudioFiles;
 - (void)startAudioPlayback;
 - (void)updateAudioParametersWithVelocity:(double)velocity;
+- (void)updateAudioParametersWithVelocity:(double)velocity currentTime:(double)currentTime;
 
 // Helper methods available to subclasses
 - (double)rampValue:(double)current toward:(double)target withDeltaTime:(double)dt timeConstantMs:(double)tauMs;
 - (void)rampToTargetParameters;
+- (void)rampToTargetParametersWithCurrentTime:(double)currentTime;
 
 @end
 

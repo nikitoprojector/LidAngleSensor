@@ -13,4 +13,7 @@
 // Track selection for anime mode
 - (void)selectSpecificTrack:(NSInteger)trackIndex;
 
+// Reset to random mode (clears manual track selection)
+- (void)resetToRandomMode;
+
 @end

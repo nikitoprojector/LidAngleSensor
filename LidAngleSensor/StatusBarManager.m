@@ -218,8 +218,8 @@
 }
 
 - (void)startUpdating {
-    // Update every 16ms (60Hz) for smooth real-time updates
-    self.updateTimer = [NSTimer scheduledTimerWithTimeInterval:0.016
+    // Update every 8ms (120Hz) for maximum responsiveness
+    self.updateTimer = [NSTimer scheduledTimerWithTimeInterval:0.008
                                                         target:self
                                                       selector:@selector(updateDisplay)
                                                       userInfo:nil

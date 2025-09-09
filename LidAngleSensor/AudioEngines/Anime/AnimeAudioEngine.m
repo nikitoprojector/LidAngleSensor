@@ -11,10 +11,6 @@
 static const double kMovementSessionTimeoutSec = 0.15; // Time without movement before considering it a new session
 static const double kFadeOutDurationSec = 0.1; // Duration for smooth fade-out
 
-// Fast stop mode constants (like creak/theremin)
-static const double kFastStopTimeoutMs = 50.0;        // Fast timeout for manual track selection
-static const double kFastStopDecayFactor = 0.5;       // Fast decay rate
-static const double kFastStopAdditionalDecay = 0.8;   // Additional fast decay
 
 // Anime sound types - fixed set of 7 sounds
 typedef NS_ENUM(NSInteger, AnimeSoundType) {
@@ -230,72 +226,38 @@ static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
     NSLog(@"[AnimeAudioEngine] Started anime engine (waiting for movement)");
 }
 
-- (void)updateAudioParametersWithVelocity:(double)velocity {
+- (void)updateAudioParametersWithVelocity:(double)velocity currentTime:(double)currentTime {
     double speed = velocity; // Velocity is already absolute
     
-    // Use fast stop mode when manual track is selected (like creak/theremin)
-    if (self.isManualTrackSelected) {
-        [self updateAudioParametersWithVelocityFastMode:speed];
-        return;
-    }
+    // Unified logic for all modes - no more fast mode distinction
     
-    // Original session-based behavior for random mode
-    // Update fade-out first
-    [self updateFadeOut];
-    
-    // Update velocity buffer for trend detection
-    [self updateVelocityBuffer:speed];
-    
-    // Check if this is significant movement (above deadzone)
-    if (speed > 1.0) { // Using same deadzone as base class
-        // Cancel fade-out only if movement is substantial (not just sensor noise)
-        if (self.isFadingOut && speed > 5.0) { // Require stronger movement to cancel fade-out
-            NSLog(@"[AnimeAudioEngine] Substantial movement detected (%.1f) - canceling fade-out", speed);
-            self.isFadingOut = NO;
+    // Check if this is significant movement (above deadzone) - increased threshold to prevent false triggers
+    if (speed > 5.0) { // Increased from 1.0 to prevent phantom movement detection
+        // Start playing if not already started
+        if (!self.hasStartedPlaying && self.isEngineRunning) {
+            NSLog(@"[AnimeAudioEngine] Movement detected (%.1f deg/s) - starting anime playback", speed);
+            [self switchToNewRandomSoundIfNeeded];
         }
         
-        // Check if we're starting a new movement session
-        if (!self.isInMovementSession) {
-            // Check if enough time has passed since last session ended (dead time)
-            double currentTime = CACurrentMediaTime();
-            double timeSinceLastSessionEnd = currentTime - self.lastSessionEndTime;
-            
-            if (self.lastSessionEndTime == 0.0 || timeSinceLastSessionEnd > 0.3) { // Increased dead time to 0.3 seconds
-                NSLog(@"[AnimeAudioEngine] Starting new movement session");
-                self.isInMovementSession = YES;
-                
-                // Initialize lastSignificantMovementTime for new session
-                self.lastSignificantMovementTime = currentTime;
-                
-                // Always switch to new random sound for new movement session
-                [self switchToNewRandomSoundIfNeeded];
-            } else {
-                NSLog(@"[AnimeAudioEngine] Ignoring movement - too soon after last session (%.3f sec)", timeSinceLastSessionEnd);
-            }
-        }
+        // Update last movement time
+        self.lastSignificantMovementTime = currentTime;
+        self.isInMovementSession = YES;
     }
     
-    // Check if movement session has ended
-    double currentTime = CACurrentMediaTime();
+    // Check if movement has stopped for too long
     double timeSinceSignificantMovement = currentTime - self.lastSignificantMovementTime;
     if (self.isInMovementSession && timeSinceSignificantMovement > kMovementSessionTimeoutSec) {
-        NSLog(@"[AnimeAudioEngine] Movement session ended - starting fade-out");
+        NSLog(@"[AnimeAudioEngine] Movement stopped for %.3f seconds - stopping anime playback", timeSinceSignificantMovement);
         self.isInMovementSession = NO;
-        self.lastSessionEndTime = currentTime; // Record when session ended
-        
-        // Start fade-out instead of immediate stop
-        [self startFadeOut];
+        [self stopAllAudioPlayback];
     }
     
     // For anime mode: simple on/off based on deadzone, no volume modulation
     double gain;
-    if (speed < 1.0) { // Below deadzone: no sound
+    if (speed < 1.0 || !self.isInMovementSession) { // Below deadzone or no movement session: no sound
         gain = 0.0;
     } else {
-        gain = 1.0; // Above deadzone: full volume
-        
-        // Update lastSignificantMovementTime only when sound is actually playing
-        self.lastSignificantMovementTime = CACurrentMediaTime();
+        gain = 1.0; // Above deadzone and in movement session: full volume
     }
     
     // Calculate target pitch/tempo rate based on movement speed (keep this for variety)
@@ -307,54 +269,15 @@ static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
     self.targetGain = gain;
     self.targetRate = rate;
     
-    // Apply smooth parameter transitions
-    [self rampToTargetParameters];
+    // Apply smooth parameter transitions with passed currentTime
+    [self rampToTargetParametersWithCurrentTime:currentTime];
 }
 
-// Fast stop mode for manual track selection (similar to creak/theremin behavior)
-- (void)updateAudioParametersWithVelocityFastMode:(double)velocity {
-    double speed = velocity; // Velocity is already absolute
-    double currentTime = CACurrentMediaTime();
-    
-    // Update velocity with fast decay (like creak/theremin)
-    if (speed > 1.0) {
-        // Real movement detected
-        self.lastSignificantMovementTime = currentTime;
-        
-        // Start playing if not already started
-        if (!self.hasStartedPlaying && self.isEngineRunning) {
-            [self startAnimeLoop];
-        }
-    } else {
-        // No movement - apply fast decay
-        double timeSinceMovement = currentTime - self.lastSignificantMovementTime;
-        if (timeSinceMovement > (kFastStopTimeoutMs / 1000.0)) {
-            // Apply additional fast decay after timeout
-            speed *= kFastStopAdditionalDecay;
-        }
-        speed *= kFastStopDecayFactor;
-    }
-    
-    // For anime mode: simple on/off based on deadzone, no volume modulation
-    double gain;
-    if (speed < 1.0) { // Below deadzone: no sound
-        gain = 0.0;
-    } else {
-        gain = 1.0; // Above deadzone: full volume
-    }
-    
-    // Calculate target pitch/tempo rate based on movement speed
-    double normalizedVelocity = fmax(0.0, fmin(1.0, speed / 100.0));
-    double rate = 0.80 + normalizedVelocity * (1.10 - 0.80);
-    rate = fmax(0.80, fmin(1.10, rate));
-    
-    // Store targets for smooth ramping
-    self.targetGain = gain;
-    self.targetRate = rate;
-    
-    // Apply smooth parameter transitions
-    [self rampToTargetParameters];
+// Keep the old method for compatibility
+- (void)updateAudioParametersWithVelocity:(double)velocity {
+    [self updateAudioParametersWithVelocity:velocity currentTime:CACurrentMediaTime()];
 }
+
 
 - (void)rampToTargetParameters {
     [super rampToTargetParameters]; // This updates currentGain and currentRate
@@ -363,11 +286,17 @@ static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
         return;
     }
     
-    // Apply ramped values to current audio nodes (no volume multiplier for anime mode)
+    // Apply ramped values to current audio nodes
     AVAudioPlayerNode *currentPlayerNode = self.playerNodes[self.currentSoundIndex];
     AVAudioUnitVarispeed *currentVarispeadUnit = self.varispeadUnits[self.currentSoundIndex];
     
-    currentPlayerNode.volume = (float)self.currentGain;
+    // For manual track selection, keep constant volume to avoid oscillations
+    if (self.isManualTrackSelected) {
+        currentPlayerNode.volume = 1.0; // Constant volume for track selection
+    } else {
+        currentPlayerNode.volume = (float)self.currentGain; // Variable volume for random mode
+    }
+    
     currentVarispeadUnit.rate = (float)self.currentRate;
 }
 
@@ -454,11 +383,11 @@ static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
     
     [currentPlayerNode play];
     
-    // Set initial volume to 0 (will be controlled by gain)
-    currentPlayerNode.volume = 0.0;
+    // Set constant volume for anime mode (not controlled by gain/movement speed)
+    currentPlayerNode.volume = 1.0;
     self.hasStartedPlaying = YES;
     
-    NSLog(@"[AnimeAudioEngine] Started playing anime sound loop");
+    NSLog(@"[AnimeAudioEngine] Started playing anime sound loop with constant volume: 1.0");
 }
 
 - (void)switchToNewRandomSoundIfNeeded {
@@ -621,6 +550,18 @@ static const AnimeSoundConfig kAnimeSoundConfigs[AnimeSoundCount] = {
     if (self.hasStartedPlaying && self.isEngineRunning) {
         [self startAnimeLoop];
     }
+}
+
+- (void)resetToRandomMode {
+    NSLog(@"[AnimeAudioEngine] Resetting to random mode");
+    
+    // Clear manual track selection flag
+    self.isManualTrackSelected = NO;
+    
+    // Select a new random sound
+    [self selectNewRandomSound];
+    
+    NSLog(@"[AnimeAudioEngine] Reset to random mode complete, new sound index: %ld", (long)self.currentSoundIndex);
 }
 
 @end

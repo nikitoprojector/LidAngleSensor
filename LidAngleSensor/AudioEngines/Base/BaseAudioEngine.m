@@ -16,12 +16,12 @@ static const double kVelocityQuiet = 100.0;   // deg/s - silent by/over this vel
 static const double kMinRate = 0.80;          // Minimum varispeed rate (lower pitch for slow movement)
 static const double kMaxRate = 1.10;          // Maximum varispeed rate (higher pitch for fast movement)
 
-// Smoothing and timing constants
-static const double kAngleSmoothingFactor = 0.05;     // Heavy smoothing for sensor noise (5% new, 95% old)
-static const double kVelocitySmoothingFactor = 0.3;   // Moderate smoothing for velocity
+// Smoothing and timing constants - optimized for faster response
+static const double kAngleSmoothingFactor = 0.3;      // Reduced smoothing for faster response (30% new, 70% old)
+static const double kVelocitySmoothingFactor = 0.5;   // Increased smoothing for velocity
 static const double kMovementThreshold = 0.5;         // Minimum angle change to register as movement (degrees)
-static const double kGainRampTimeMs = 50.0;           // Gain ramping time constant (milliseconds)
-static const double kRateRampTimeMs = 80.0;           // Rate ramping time constant (milliseconds)
+static const double kGainRampTimeMs = 30.0;           // Faster gain ramping (reduced from 50ms)
+static const double kRateRampTimeMs = 50.0;           // Faster rate ramping (reduced from 80ms)
 static const double kMovementTimeoutMs = 50.0;        // Time before aggressive velocity decay (milliseconds)
 static const double kVelocityDecayFactor = 0.5;       // Decay rate when no movement detected
 static const double kAdditionalDecayFactor = 0.8;     // Additional decay after timeout
@@ -37,6 +37,10 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 @property (nonatomic, assign) double currentRate;
 @property (nonatomic, assign) BOOL isFirstUpdate;
 @property (nonatomic, assign) NSTimeInterval lastMovementTime;
+
+// Warmup period to prevent false triggers during initialization
+@property (nonatomic, assign) NSTimeInterval initializationTime;
+@property (nonatomic, assign) BOOL isInWarmupPeriod;
 
 @end
 
@@ -55,6 +59,10 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
         _targetRate = 1.0;
         _currentGain = 0.0;
         _currentRate = 1.0;
+        
+        // Initialize warmup period to prevent false triggers
+        _initializationTime = CACurrentMediaTime();
+        _isInWarmupPeriod = YES;
         
         if (![self setupAudioEngine]) {
             NSLog(@"[%@] Failed to setup audio engine", NSStringFromClass([self class]));
@@ -163,8 +171,8 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     // Update state for next iteration
     self.lastUpdateTime = currentTime;
     
-    // Apply velocity-based parameter mapping
-    [self updateAudioParametersWithVelocity:self.smoothedVelocity];
+    // Apply velocity-based parameter mapping (pass currentTime to avoid recalculating)
+    [self updateAudioParametersWithVelocity:self.smoothedVelocity currentTime:currentTime];
 }
 
 - (void)setAngularVelocity:(double)velocity {
@@ -180,13 +188,16 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 }
 
 - (void)rampToTargetParameters {
+    [self rampToTargetParametersWithCurrentTime:CACurrentMediaTime()];
+}
+
+- (void)rampToTargetParametersWithCurrentTime:(double)currentTime {
     if (!self.isEngineRunning) {
         return;
     }
     
     // Calculate delta time for ramping
     static double lastRampTime = 0;
-    double currentTime = CACurrentMediaTime();
     if (lastRampTime == 0) lastRampTime = currentTime;
     double deltaTime = currentTime - lastRampTime;
     lastRampTime = currentTime;
@@ -214,6 +225,27 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
 }
 
 - (void)updateAudioParametersWithVelocity:(double)velocity {
+    [self updateAudioParametersWithVelocity:velocity currentTime:CACurrentMediaTime()];
+}
+
+- (void)updateAudioParametersWithVelocity:(double)velocity currentTime:(double)currentTime {
+    // Check warmup period to prevent false triggers during initialization
+    static const NSTimeInterval kWarmupPeriodSeconds = 1.5; // 1.5 second warmup period
+    
+    if (self.isInWarmupPeriod) {
+        NSTimeInterval timeSinceInit = currentTime - self.initializationTime;
+        if (timeSinceInit >= kWarmupPeriodSeconds) {
+            self.isInWarmupPeriod = NO;
+            NSLog(@"[%@] Warmup period completed after %.2f seconds", NSStringFromClass([self class]), timeSinceInit);
+        } else {
+            // During warmup period, suppress all audio to prevent false triggers
+            self.targetGain = 0.0;
+            self.targetRate = 1.0;
+            [self rampToTargetParametersWithCurrentTime:currentTime];
+            return;
+        }
+    }
+    
     // Default implementation - subclasses should override
     double speed = velocity; // Velocity is already absolute
     
@@ -222,12 +254,9 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     if (speed < kDeadzone) {
         gain = 0.0; // Below deadzone: no sound
     } else {
-        // Use inverted smoothstep curve for natural volume response
-        double e0 = fmax(0.0, kVelocityFull - 0.5);
-        double e1 = kVelocityQuiet + 0.5;
-        double t = fmin(1.0, fmax(0.0, (speed - e0) / (e1 - e0)));
-        double s = t * t * (3.0 - 2.0 * t); // smoothstep function
-        gain = 1.0 - s; // invert: slow = loud, fast = quiet
+        // Use simplified linear interpolation instead of smoothstep for performance
+        double t = fmin(1.0, fmax(0.0, (speed - kVelocityFull) / (kVelocityQuiet - kVelocityFull)));
+        gain = 1.0 - t; // invert: slow = loud, fast = quiet
         gain = fmax(0.0, fmin(1.0, gain));
     }
     
@@ -240,8 +269,8 @@ static const double kAdditionalDecayFactor = 0.8;     // Additional decay after 
     self.targetGain = gain;
     self.targetRate = rate;
     
-    // Apply smooth parameter transitions
-    [self rampToTargetParameters];
+    // Apply smooth parameter transitions (pass currentTime to avoid recalculating)
+    [self rampToTargetParametersWithCurrentTime:currentTime];
 }
 
 #pragma mark - Property Accessors
