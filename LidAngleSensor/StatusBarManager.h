@@ -28,6 +28,7 @@
 // Submenu items for track selection
 @property (strong, nonatomic) NSMenu *gachigasmSubmenu;
 @property (strong, nonatomic) NSMenu *animeSubmenu;
+@property (strong, nonatomic) NSMenu *systemSoundsSubmenu;
 
 - (instancetype)init;
 - (void)setupStatusBar;
@@ -47,5 +48,6 @@
 // Track selection actions
 - (void)selectGachiTrack:(id)sender;
 - (void)selectAnimeTrack:(id)sender;
+- (void)selectSystemSoundsTrack:(id)sender;
 
 @end

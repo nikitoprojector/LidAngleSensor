@@ -22,6 +22,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) AVAudioEngine *audioEngine;
 @property (nonatomic, assign) double targetGain;
 @property (nonatomic, assign) double targetRate;
+@property (nonatomic, readonly) BOOL isInWarmupPeriod;
 
 // Common methods
 - (void)startEngine;

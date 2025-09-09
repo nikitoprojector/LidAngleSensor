@@ -10,6 +10,7 @@
 #import "AudioEngines/Theremin/ThereminAudioEngine.h"
 #import "AudioEngines/Gachi/GachiAudioEngine.h"
 #import "AudioEngines/Anime/AnimeAudioEngine.h"
+#import "AudioEngines/SystemSounds/SystemSoundsAudioEngine.h"
 
 @interface SoundManager ()
 @property (nonatomic, assign) NSTimeInterval lastSoundTime;
@@ -96,6 +97,14 @@
         NSLog(@"[SoundManager] WARNING: AnimeAudioEngine initialization failed");
     }
     
+    NSLog(@"[SoundManager] Initializing SystemSoundsAudioEngine");
+    self.systemSoundsAudioEngine = [[SystemSoundsAudioEngine alloc] init];
+    if (self.systemSoundsAudioEngine) {
+        NSLog(@"[SoundManager] SystemSoundsAudioEngine initialized successfully");
+    } else {
+        NSLog(@"[SoundManager] WARNING: SystemSoundsAudioEngine initialization failed");
+    }
+    
     NSLog(@"[SoundManager] Audio engine initialization completed");
 }
 
@@ -114,6 +123,9 @@
     }
     if (soundType == SoundTypeAnimeRandom && self.animeAudioEngine) {
         [self.animeAudioEngine resetToRandomMode];
+    }
+    if (soundType == SoundTypeSystemSoundsRandom && self.systemSoundsAudioEngine) {
+        [self.systemSoundsAudioEngine resetToRandomMode];
     }
     
     // Update sound type
@@ -181,6 +193,18 @@
                 NSLog(@"[SoundManager] Started anime mode");
             }
             break;
+        case SoundTypeSystemSoundsRandom:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started system sounds random mode");
+            }
+            break;
+        case SoundTypeSystemSounds:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine startEngine];
+                NSLog(@"[SoundManager] Started system sounds mode");
+            }
+            break;
         case SoundTypeOff:
         default:
             break;
@@ -231,6 +255,13 @@
             }
             break;
             
+        case SoundTypeSystemSoundsRandom:
+        case SoundTypeSystemSounds:
+            if (self.systemSoundsAudioEngine) {
+                [self.systemSoundsAudioEngine updateWithLidAngle:angle];
+            }
+            break;
+            
         case SoundTypeOff:
         default:
             break;
@@ -250,6 +281,9 @@
     }
     if (self.animeAudioEngine) {
         [self.animeAudioEngine stopEngine];
+    }
+    if (self.systemSoundsAudioEngine) {
+        [self.systemSoundsAudioEngine stopEngine];
     }
 }
 
@@ -271,6 +305,10 @@
             return @"anime random";
         case SoundTypeAnime:
             return @"anime";
+        case SoundTypeSystemSoundsRandom:
+            return @"system sounds random";
+        case SoundTypeSystemSounds:
+            return @"system sounds";
         default:
             return @"Unknown";
     }
@@ -285,7 +323,9 @@
         @(SoundTypeGachiRandom),
         @(SoundTypeGachigasm),
         @(SoundTypeAnimeRandom),
-        @(SoundTypeAnime)
+        @(SoundTypeAnime),
+        @(SoundTypeSystemSoundsRandom),
+        @(SoundTypeSystemSounds)
     ];
 }
 

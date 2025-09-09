@@ -10,6 +10,7 @@
 #import "SoundManager.h"
 #import "AudioEngines/Gachi/GachiAudioEngine.h"
 #import "AudioEngines/Anime/AnimeAudioEngine.h"
+#import "AudioEngines/SystemSounds/SystemSoundsAudioEngine.h"
 
 @implementation StatusBarManager
 
@@ -197,6 +198,30 @@
             }
             
             [menuItem setSubmenu:self.animeSubmenu];
+            
+        } else if (soundType == SoundTypeSystemSounds) {
+            menuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"  %@", soundName]
+                                                  action:nil
+                                           keyEquivalent:@""];
+            
+            // Create submenu for system sounds tracks
+            self.systemSoundsSubmenu = [[NSMenu alloc] init];
+            
+            // Get track names from SystemSoundsAudioEngine
+            if (self.soundManager.systemSoundsAudioEngine) {
+                NSInteger totalSounds = [self.soundManager.systemSoundsAudioEngine totalSoundCount];
+                for (NSInteger i = 0; i < totalSounds; i++) {
+                    NSString *soundName = [self.soundManager.systemSoundsAudioEngine soundNameAtIndex:i];
+                    NSMenuItem *trackItem = [[NSMenuItem alloc] initWithTitle:soundName
+                                                                       action:@selector(selectSystemSoundsTrack:)
+                                                                keyEquivalent:@""];
+                    [trackItem setTarget:self];
+                    [trackItem setTag:i]; // Store track index in tag
+                    [self.systemSoundsSubmenu addItem:trackItem];
+                }
+            }
+            
+            [menuItem setSubmenu:self.systemSoundsSubmenu];
             
         } else {
             // Regular menu item for other sound types
@@ -478,6 +503,24 @@
     // Tell the anime audio engine to use the specific track
     if (self.soundManager.animeAudioEngine) {
         [self.soundManager.animeAudioEngine selectSpecificTrack:trackIndex];
+    }
+    
+    [self updateMenuStates];
+    [self saveUserPreferences];
+}
+
+- (void)selectSystemSoundsTrack:(id)sender {
+    NSMenuItem *menuItem = (NSMenuItem *)sender;
+    NSInteger trackIndex = menuItem.tag;
+    
+    NSLog(@"[StatusBarManager] Selected system sounds track %ld", (long)trackIndex);
+    
+    // Set to system sounds mode and specify the track
+    [self.soundManager setSoundType:SoundTypeSystemSounds];
+    
+    // Tell the system sounds audio engine to use the specific track
+    if (self.soundManager.systemSoundsAudioEngine) {
+        [self.soundManager.systemSoundsAudioEngine selectSpecificTrack:trackIndex];
     }
     
     [self updateMenuStates];
