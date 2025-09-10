@@ -9,7 +9,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 
 // Theremin parameter mapping constants
-static const double kMinFrequency = 55.0;        // Hz - A1 note (closed lid) - lower start
+static const double kMinFrequency = 27.5;        // Hz - A0 note (closed lid) - much lower start
 static const double kMaxFrequency = 880.0;       // Hz - A5 note (open lid) - much higher range
 static const double kMinAngle = 0.0;             // degrees - closed lid
 static const double kMaxAngle = 135.0;           // degrees - fully open lid
